@@ -25,7 +25,7 @@ from src.data.patch_generation import (
 )
 from src.data.preprocessing import composite_path
 
-TEST_SOURCE = "alphaearth"
+TEST_SOURCE = str(get_config()["ground_truth"]["chosen_source"])
 
 
 def _write_geotiff(path, array, transform, crs="EPSG:31983") -> None:

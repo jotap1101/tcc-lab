@@ -21,8 +21,9 @@ def test_reference_year_per_source_override() -> None:
 
 
 def test_active_year_follows_chosen_source() -> None:
-    """O ano ativo deve ser o da fonte escolhida (alphaearth, ano 2024)."""
-    assert mask_utils.active_year() == 2024
+    """O ano ativo deve ser o da fonte escolhida em config.yaml."""
+    chosen = get_config()["ground_truth"]["chosen_source"]
+    assert mask_utils.active_year() == mask_utils.reference_year(chosen)
 
 
 def test_required_data_years_derived_from_enabled_sources() -> None:

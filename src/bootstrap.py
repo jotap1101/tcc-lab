@@ -48,6 +48,30 @@ def workspace_root() -> pathlib.Path:
     return pathlib.Path.cwd()
 
 
+def _resolve_repo_dir(extract_dir: pathlib.Path) -> pathlib.Path:
+    """Retorna o diretório raiz extraído do tarball, independente do nome do repo.
+
+    O GitHub nomeia a raiz do arquivo como `<repositorio>-main`; derivar o
+    caminho do conteúdo extraído evita quebrar o bootstrap quando o repositório
+    é renomeado.
+    """
+    extracted = sorted(path for path in extract_dir.iterdir() if path.is_dir())
+    if len(extracted) != 1:
+        raise RuntimeError(
+            "Estrutura inesperada no tarball do repositório: "
+            f"{len(extracted)} diretórios encontrados em {extract_dir}"
+        )
+    return extracted[0]
+
+
+def _validate_repo_dir(repo_dir: pathlib.Path) -> None:
+    """Confere os itens obrigatórios antes de substituir o workspace."""
+    required = ("src", "requirements-runtime.txt")
+    missing = [rel for rel in required if not (repo_dir / rel).exists()]
+    if missing:
+        raise FileNotFoundError(f"Itens obrigatórios ausentes no tarball do repositório: {missing}")
+
+
 def _download_and_extract(workspace: pathlib.Path) -> None:
     """Baixa o tarball do repo e extrai src/, data/external/ e requirements-runtime.txt."""
     archive = workspace / "_repo_bootstrap.tar.gz"
@@ -56,7 +80,8 @@ def _download_and_extract(workspace: pathlib.Path) -> None:
         urllib.request.urlretrieve(f"{REPO_URL}/archive/refs/heads/main.tar.gz", archive)
         with tarfile.open(archive, "r:gz") as tf:
             tf.extractall(extract_dir)
-        repo_dir = extract_dir / "tcc-main"
+        repo_dir = _resolve_repo_dir(extract_dir)
+        _validate_repo_dir(repo_dir)
         for rel in ("src", "data", "requirements-runtime.txt"):
             target = workspace / rel
             if target.is_dir():
@@ -88,10 +113,12 @@ def _seed_drive_mirror(workspace: pathlib.Path) -> None:
     mirror = DRIVE_ROOT / "tcc" / "repo"
 
     def _refresh(source: pathlib.Path, target: pathlib.Path) -> None:
+        # Preserva o espelho existente quando a origem não foi entregue ao workspace.
+        if not source.exists():
+            return
         if target.exists():
             shutil.rmtree(target)
-        if source.exists():
-            shutil.copytree(source, target)
+        shutil.copytree(source, target)
 
     _refresh(workspace / "src", mirror / "src")
     _refresh(workspace / "data" / "external", mirror / "data" / "external")

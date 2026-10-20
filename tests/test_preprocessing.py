@@ -17,7 +17,7 @@ from src.data.preprocessing import (
     verify_composite,
 )
 
-TEST_SOURCE = "alphaearth"
+TEST_SOURCE = str(get_config()["ground_truth"]["chosen_source"])
 
 
 def _write_geotiff(path, array, transform, crs="EPSG:31983") -> None:
