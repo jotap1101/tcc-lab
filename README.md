@@ -53,7 +53,7 @@ tcc/
 │   └── external/          # dados de referência versionados (ex.: malha IBGE)
 ├── models/                # espelho local de MyDrive/tcc/models (ignorado pelo git)
 ├── artifacts/             # espelho local de MyDrive/tcc/artifacts (ignorado pelo git)
-└── docs/                  # submodulo git (tcc-docs) — material teórico, somente leitura
+└── tcc-docs/              # submodulo git (tcc-docs) — material teórico, somente leitura
 ```
 
 O **armazenamento canônico** de dados e artefatos não fica no repositório: tudo é gravado dentro da pasta **`tcc/` na raiz do Google Drive** (`MyDrive/tcc/`), acessada ou criada pelos próprios notebooks (junto com todas as subpastas de que precisarem). Nenhuma estrutura pré-criada é assumida:

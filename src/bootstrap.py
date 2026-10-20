@@ -15,7 +15,7 @@ import sys
 import tarfile
 import urllib.request
 
-REPO_URL = "https://github.com/jotap1101/tcc"
+REPO_URL = "https://github.com/jotap1101/tcc-lab"
 WORKSPACE_COLAB = pathlib.Path("/content")
 WORKSPACE_KAGGLE = pathlib.Path("/kaggle/working")
 DRIVE_MOUNT_POINT = pathlib.Path("/content/drive")
