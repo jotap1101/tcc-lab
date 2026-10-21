@@ -13,8 +13,10 @@ fonte e reutilizados em reexecuções (idempotência), com metadata em artifacts
 
 from __future__ import annotations
 
+import hashlib
 import io as stdlib_io
 import json
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -277,6 +279,29 @@ def train_fold(
     )
 
 
+def _config_hash() -> str:
+    """Hash SHA-256 curto do config.yaml vigente (fingerprint da configuração)."""
+    from src.config import CONFIG_PATH
+
+    return hashlib.sha256(CONFIG_PATH.read_bytes()).hexdigest()[:12]
+
+
+def _commit_sha() -> str:
+    """SHA do commit git em execução (best-effort; 'unknown' quando não disponível)."""
+    try:
+        completed = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=False,
+            cwd=Path(__file__).resolve().parent,
+        )
+    except OSError:
+        return "unknown"
+    sha = completed.stdout.strip()
+    return sha if completed.returncode == 0 and sha else "unknown"
+
+
 def _package_versions() -> dict[str, str]:
     """Versões dos pacotes principais do runtime, para o log de reprodutibilidade."""
     import importlib.metadata
@@ -294,6 +319,7 @@ def run_metadata(
     model_name: str, storage_paths: dict[str, Path], source_name: str
 ) -> dict[str, Any]:
     """Metadata de reprodutibilidade de uma execução de treino da fonte."""
+    from src import io
     from src.data.patch_generation import patch_fingerprint_hash
     from src.data.spatial_split import fold_count
 
@@ -304,6 +330,9 @@ def run_metadata(
         "source_name": source_name,
         "year": reference_year(source_name),
         "fold_count": fold_count(),
+        "platform": io.detect_platform(),
+        "config_hash": _config_hash(),
+        "commit_sha": _commit_sha(),
         "seed": int(config["reproducibility"]["seed"]),
         "epochs": int(training["epochs"]),
         "batch_size": int(training["batch_size"]),

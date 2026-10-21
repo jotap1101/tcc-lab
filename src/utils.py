@@ -34,6 +34,8 @@ def set_all_seeds(seed: int) -> None:
 
 def set_deterministic_flags() -> None:
     """Habilita flags determinísticas do PyTorch (quando suportadas)."""
+    # Exigido pelo PyTorch para operações cuBLAS determinísticas no CUDA.
+    os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
     torch.use_deterministic_algorithms(True)

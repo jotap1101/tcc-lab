@@ -1,5 +1,7 @@
 """Testes de src/utils.py (sementes fixas, flags e apoio aos notebooks)."""
 
+import os
+
 import pytest
 
 from src.config import get_config
@@ -17,6 +19,13 @@ def test_set_all_seeds_and_flags_run() -> None:
     """Sementes e flags determinísticas devem executar sem erro."""
     set_all_seeds(42)
     set_deterministic_flags()
+
+
+def test_set_deterministic_flags_sets_cublas_workspace(monkeypatch) -> None:
+    """O CUDA determinístico exige CUBLAS_WORKSPACE_CONFIG definido."""
+    monkeypatch.delenv("CUBLAS_WORKSPACE_CONFIG", raising=False)
+    set_deterministic_flags()
+    assert os.environ["CUBLAS_WORKSPACE_CONFIG"] in {":4096:8", ":16:8"}
 
 
 def test_setup_reproducibility_prints_seed(capsys) -> None:

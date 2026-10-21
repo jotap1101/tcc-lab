@@ -215,6 +215,9 @@ def test_run_metadata_and_save(tmp_path, monkeypatch) -> None:
     assert meta["fold_count"] == int(get_config()["splits"]["fold_count"])
     assert meta["seed"] == 42
     assert meta["epochs"] == 1
+    assert meta["platform"] == "local"
+    assert len(meta["config_hash"]) == 12
+    assert "commit_sha" in meta
     assert "manifest_fingerprint_hash" in meta
     assert "environment" in meta
 
