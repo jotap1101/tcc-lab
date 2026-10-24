@@ -38,9 +38,13 @@
         "type": "remote",
         "url": "https://drivemcp.googleapis.com/mcp/v1",
         "oauth": {
-          "clientId": "{env:GOOGLE_DRIVE_MCP_CLIENT_ID}",
-          "clientSecret": "{env:GOOGLE_DRIVE_MCP_CLIENT_SECRET}",
+          "client_id": "{env:GOOGLE_DRIVE_MCP_CLIENT_ID}",
+          "client_secret": "{env:GOOGLE_DRIVE_MCP_CLIENT_SECRET}",
         },
+      },
+      "kaggle": {
+        "type": "remote",
+        "url": "https://www.kaggle.com/mcp",
       },
     }
   }
