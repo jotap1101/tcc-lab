@@ -18,47 +18,17 @@ from __future__ import annotations
 import argparse
 import json
 import shutil
-import subprocess
 import sys
 import tempfile
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from _kaggle_cli import authenticated_username, find_kaggle_cli, run_cli
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SECRETS_DIR = REPO_ROOT / "secrets"
 DATASET_FILES = ("drive_token.json", "earthengine_credentials.json")
-
-
-def _kaggle_executable() -> str:
-    """Localiza o CLI do Kaggle (venv atual ou PATH)."""
-    candidates = [Path(sys.executable).with_name("kaggle")]
-    found = shutil.which("kaggle")
-    if found:
-        candidates.append(Path(found))
-    for candidate in candidates:
-        if candidate.is_file():
-            return str(candidate)
-    raise RuntimeError(
-        "Kaggle CLI não encontrado. Instale no ambiente virtual com "
-        "`.venv/bin/pip install kaggle`."
-    )
-
-
-def _run(cli: str, args: list[str], echo: bool = True) -> tuple[int, str]:
-    """Executa um subcomando do CLI e devolve (código, saída combinada)."""
-    result = subprocess.run([cli, *args], text=True, capture_output=True)
-    output = f"{result.stdout}\n{result.stderr}".strip()
-    if echo and output:
-        print(output)
-    return result.returncode, output
-
-
-def _authenticated_username(cli: str) -> str | None:
-    """Lê o usuário autenticado em `kaggle config view`."""
-    _, output = _run(cli, ["config", "view"], echo=False)
-    for line in output.splitlines():
-        if line.strip().startswith("- username:"):
-            return line.split(":", 1)[1].strip()
-    return None
 
 
 def main() -> None:
@@ -76,8 +46,8 @@ def main() -> None:
     if missing:
         raise FileNotFoundError(f"Tokens ausentes em {SECRETS_DIR}: {missing}")
 
-    cli = _kaggle_executable()
-    username = _authenticated_username(cli)
+    cli = find_kaggle_cli()
+    username = authenticated_username(cli)
     owner = dataset_id.split("/")[0]
     if username and owner != username:
         raise SystemExit(
@@ -99,15 +69,15 @@ def main() -> None:
             json.dumps(metadata, indent=2) + "\n", encoding="utf-8"
         )
 
-        exists = False if args.create else _run(
+        exists = False if args.create else run_cli(
             cli, ["datasets", "files", dataset_id], echo=False
         )[0] == 0
         if exists:
-            code, output = _run(
+            code, output = run_cli(
                 cli, ["datasets", "version", "-p", str(staging_path), "-m", args.message]
             )
         else:
-            code, output = _run(cli, ["datasets", "create", "-p", str(staging_path)])
+            code, output = run_cli(cli, ["datasets", "create", "-p", str(staging_path)])
 
     if code != 0 or "error" in output.lower():
         raise SystemExit(
