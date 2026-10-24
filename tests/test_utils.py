@@ -106,3 +106,17 @@ def test_get_secret_returns_none_when_unmapped(tmp_path, monkeypatch):
     """Segredo sem arquivo mapeado retorna None quando não há outra fonte."""
     _fake_dataset(tmp_path, monkeypatch)
     assert get_secret("NAO_MAPEADO") is None
+
+
+def test_get_secret_reads_nested_dataset_layout(tmp_path, monkeypatch):
+    """Layout atual do Kaggle: /kaggle/input/datasets/<owner>/<slug>/."""
+    dataset_dir = tmp_path / "datasets" / "user" / "tcc-secrets"
+    dataset_dir.mkdir(parents=True)
+    (dataset_dir / "drive_token.json").write_text('{"token": "nested"}', encoding="utf-8")
+    monkeypatch.setattr("src.utils.KAGGLE_INPUT_ROOT", tmp_path)
+    monkeypatch.setattr(
+        "src.config.get_config",
+        lambda: {"secrets": {"kaggle_dataset": "user/tcc-secrets"}},
+    )
+    monkeypatch.delenv("GDRIVE_TOKEN", raising=False)
+    assert get_secret("GDRIVE_TOKEN") == '{"token": "nested"}'

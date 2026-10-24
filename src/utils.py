@@ -21,17 +21,29 @@ _KAGGLE_DATASET_SECRET_FILES = {
 
 
 def _dataset_secret(name: str) -> str | None:
-    """Lê um segredo do dataset privado anexado em /kaggle/input/<slug>/."""
+    """Lê um segredo do dataset privado anexado em /kaggle/input/."""
     from src.config import get_config
 
     filename = _KAGGLE_DATASET_SECRET_FILES.get(name)
-    slug = get_config().get("secrets", {}).get("kaggle_dataset")
-    if not filename or not slug:
+    reference = get_config().get("secrets", {}).get("kaggle_dataset")
+    if not filename or not reference:
         return None
-    path = KAGGLE_INPUT_ROOT / str(slug).split("/")[-1] / filename
-    if not path.is_file():
+    parts = str(reference).split("/")
+    if len(parts) != 2:
         return None
-    return str(path) if name == "GDRIVE_TOKEN_FILE" else path.read_text(encoding="utf-8")
+    owner, slug = parts
+    candidates = (
+        KAGGLE_INPUT_ROOT / "datasets" / owner / slug,
+        KAGGLE_INPUT_ROOT / slug,
+        KAGGLE_INPUT_ROOT / owner / slug,
+    )
+    for dataset_dir in candidates:
+        path = dataset_dir / filename
+        if path.is_file():
+            if name == "GDRIVE_TOKEN_FILE":
+                return str(path)
+            return path.read_text(encoding="utf-8")
+    return None
 
 
 def get_secret(name: str) -> str | None:
