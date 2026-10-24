@@ -1,7 +1,75 @@
 """Testes de src/io.py (abstração de plataforma e de armazenamento tcc/)."""
 
+from pathlib import Path
+
 from src import io
 from src.config import get_config
+
+
+class _FakeRequest:
+    """Requisição falsa da Drive API que devolve um payload fixo."""
+
+    def __init__(self, payload: dict) -> None:
+        self._payload = payload
+
+    def execute(self) -> dict:
+        return self._payload
+
+
+class _FakeFiles:
+    """Recurso `files()` falso, registrando criações e atualizações."""
+
+    def __init__(self) -> None:
+        self.created: list[dict] = []
+        self.updated: list[str] = []
+
+    def create(self, body: dict, media_body: object, fields: str) -> _FakeRequest:
+        self.created.append(body)
+        return _FakeRequest({"id": "created-id"})
+
+    def update(self, fileId: str, media_body: object) -> _FakeRequest:
+        self.updated.append(fileId)
+        return _FakeRequest({"id": fileId})
+
+
+class _FakeService:
+    """Serviço falso da Drive API expondo apenas o recurso `files()`."""
+
+    def __init__(self, files: _FakeFiles) -> None:
+        self._files = files
+
+    def files(self) -> _FakeFiles:
+        return self._files
+
+
+def test_upload_creates_parent_folders_and_overwrites(tmp_path: Path, monkeypatch) -> None:
+    """O upload deve criar pastas pai aninhadas e atualizar arquivos existentes."""
+    client = io.DriveClient()
+    local = tmp_path / "fold_0.pt"
+    local.write_bytes(b"weights")
+    files = _FakeFiles()
+    ensured: list[str] = []
+
+    def _ensure_folder(path: str) -> str:
+        ensured.append(path)
+        return "parent-id"
+
+    monkeypatch.setattr(client, "_build_service", lambda: _FakeService(files))
+    monkeypatch.setattr(client, "ensure_folder", _ensure_folder)
+    monkeypatch.setattr(client, "_file_id", lambda path: None)
+
+    client.upload(local, "tcc/models/unet/emater/fold_0.pt")
+
+    assert ensured == ["tcc/models/unet/emater"]
+    assert [body["name"] for body in files.created] == ["fold_0.pt"]
+    assert files.created[0]["parents"] == ["parent-id"]
+    assert files.updated == []
+
+    # Reexecução: o arquivo remoto existente deve ser atualizado, sem duplicata.
+    monkeypatch.setattr(client, "_file_id", lambda path: "existing-id")
+    client.upload(local, "tcc/models/unet/emater/fold_0.pt")
+
+    assert files.updated == ["existing-id"]
 
 
 def test_detect_platform_returns_known_value() -> None:

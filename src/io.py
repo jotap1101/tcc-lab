@@ -87,8 +87,12 @@ class DriveClient:
         files = res.get("files", [])
         return files[0]["id"] if files else None
 
-    def ensure_folder(self, remote_path: str) -> None:
-        """Cria recursivamente uma pasta (separada por '/') no Drive, se ausente."""
+    def ensure_folder(self, remote_path: str) -> str:
+        """Cria recursivamente uma pasta (separada por '/') no Drive, se ausente.
+
+        Retorna o ID da pasta folha (ou 'root' quando o caminho é vazio), de modo
+        que o chamador possa reutilizá-lo como pai de um upload.
+        """
         service = self._build_service()
         parent = "root"
         for part in remote_path.split("/"):
@@ -105,28 +109,30 @@ class DriveClient:
             }
             created = service.files().create(body=metadata, fields="id").execute()
             parent = created["id"]
+        return parent
 
     def upload(self, local_path: Path, remote_path: str) -> None:
         """Faz upload de um arquivo local para um caminho remoto no Drive.
 
-        Usa upload resumível em blocos (MediaFileUpload) para arquivos grandes,
-        como o composite normalizado do estágio 05 — mais robusto que um upload
-        simples em uma única requisição.
+        Cria recursivamente as pastas pai ausentes (ex.: models/<modelo>/<fonte>/
+        no treino) e substitui o conteúdo quando o arquivo já existe, evitando
+        duplicatas homônimas em reexecuções. Usa upload resumível em blocos
+        (MediaFileUpload) para arquivos grandes, como o composite normalizado do
+        estágio 05 — mais robusto que um upload simples em uma única requisição.
         """
         from googleapiclient.http import DEFAULT_CHUNK_SIZE, MediaFileUpload
 
         service = self._build_service()
-        parts = remote_path.split("/")
-        parent = "root"
-        for part in parts[:-1]:
-            if not part:
-                continue
-            folder_id = self._folder_id(part, parent)
-            if folder_id is None:
-                raise FileNotFoundError(f"Pasta ausente no Drive: {part}")
-            parent = folder_id
-        metadata = {"name": parts[-1], "parents": [parent]}
+        parts = [part for part in remote_path.split("/") if part]
+        if not parts:
+            raise ValueError("Caminho remoto vazio para upload no Drive.")
+        parent = self.ensure_folder("/".join(parts[:-1]))
         media = MediaFileUpload(str(local_path), resumable=True, chunksize=DEFAULT_CHUNK_SIZE)
+        existing = self._file_id(remote_path)
+        if existing is not None:
+            service.files().update(fileId=existing, media_body=media).execute()
+            return
+        metadata = {"name": parts[-1], "parents": [parent]}
         service.files().create(body=metadata, media_body=media, fields="id").execute()
 
     def download(self, remote_path: str, local_path: Path) -> None:
