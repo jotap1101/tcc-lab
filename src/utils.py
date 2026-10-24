@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
 import random
 from pathlib import Path
@@ -10,18 +11,41 @@ from typing import Any
 import numpy as np
 import torch
 
+KAGGLE_INPUT_ROOT = Path("/kaggle/input")
+
+_KAGGLE_DATASET_SECRET_FILES = {
+    "GDRIVE_TOKEN": "drive_token.json",
+    "GDRIVE_TOKEN_FILE": "drive_token.json",
+    "GEE_CREDENTIALS": "earthengine_credentials.json",
+}
+
+
+def _dataset_secret(name: str) -> str | None:
+    """Lê um segredo do dataset privado anexado em /kaggle/input/<slug>/."""
+    from src.config import get_config
+
+    filename = _KAGGLE_DATASET_SECRET_FILES.get(name)
+    slug = get_config().get("secrets", {}).get("kaggle_dataset")
+    if not filename or not slug:
+        return None
+    path = KAGGLE_INPUT_ROOT / str(slug).split("/")[-1] / filename
+    if not path.is_file():
+        return None
+    return str(path) if name == "GDRIVE_TOKEN_FILE" else path.read_text(encoding="utf-8")
+
 
 def get_secret(name: str) -> str | None:
-    """Lê um segredo de variável de ambiente ou dos Secrets do Kaggle."""
+    """Lê um segredo de env var, dos Kaggle Secrets ou do dataset privado."""
     value = os.getenv(name)
     if value:
         return value
-    try:
+    with contextlib.suppress(Exception):
         from kaggle_secrets import UserSecretsClient
 
-        return UserSecretsClient().get_secret(name)
-    except Exception:
-        return None
+        value = UserSecretsClient().get_secret(name)
+        if value:
+            return value
+    return _dataset_secret(name)
 
 
 def set_all_seeds(seed: int) -> None:

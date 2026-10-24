@@ -7,6 +7,7 @@ import pytest
 from src.config import get_config
 from src.utils import (
     check_dependencies,
+    get_secret,
     log_environment,
     print_summary,
     set_all_seeds,
@@ -67,3 +68,41 @@ def test_print_summary_prints_items_and_conclusion(capsys) -> None:
     captured = capsys.readouterr()
     assert "chave: valor" in captured.out
     assert "Estágio 99 concluído." in captured.out
+
+
+def _fake_dataset(tmp_path, monkeypatch):
+    """Configura um dataset privado fictício e desabilita Secrets do Kaggle."""
+    dataset_dir = tmp_path / "tcc-secrets"
+    dataset_dir.mkdir()
+    (dataset_dir / "drive_token.json").write_text('{"token": "x"}', encoding="utf-8")
+    monkeypatch.setattr("src.utils.KAGGLE_INPUT_ROOT", tmp_path)
+    monkeypatch.setattr(
+        "src.config.get_config",
+        lambda: {"secrets": {"kaggle_dataset": "user/tcc-secrets"}},
+    )
+    monkeypatch.delenv("GDRIVE_TOKEN", raising=False)
+    return dataset_dir
+
+
+def test_get_secret_prefers_environment_variable(monkeypatch):
+    """Variável de ambiente tem prioridade sobre as demais fontes."""
+    monkeypatch.setenv("GDRIVE_TOKEN", '{"token": "env"}')
+    assert get_secret("GDRIVE_TOKEN") == '{"token": "env"}'
+
+
+def test_get_secret_reads_private_dataset(tmp_path, monkeypatch):
+    """Sem env var/Secret, o token é lido do dataset privado anexado."""
+    _fake_dataset(tmp_path, monkeypatch)
+    assert get_secret("GDRIVE_TOKEN") == '{"token": "x"}'
+
+
+def test_get_secret_returns_dataset_file_path(tmp_path, monkeypatch):
+    """GDRIVE_TOKEN_FILE aponta para o arquivo do dataset, não para o conteúdo."""
+    dataset_dir = _fake_dataset(tmp_path, monkeypatch)
+    assert get_secret("GDRIVE_TOKEN_FILE") == str(dataset_dir / "drive_token.json")
+
+
+def test_get_secret_returns_none_when_unmapped(tmp_path, monkeypatch):
+    """Segredo sem arquivo mapeado retorna None quando não há outra fonte."""
+    _fake_dataset(tmp_path, monkeypatch)
+    assert get_secret("NAO_MAPEADO") is None

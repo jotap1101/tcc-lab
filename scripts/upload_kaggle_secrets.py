@@ -1,0 +1,122 @@
+"""Publica/atualiza o dataset privado do Kaggle com os tokens locais.
+
+Executar na máquina após gerar ou rotacionar os tokens em `secrets/`. O dataset
+privado declarado em `src/config.yaml` (`secrets.kaggle_dataset`) é anexado aos
+notebooks como input e lido pelo fallback de `get_secret` em
+`/kaggle/input/<slug>/`, eliminando o anexo manual de Secrets por notebook.
+Nenhum token é versionado: este script apenas os envia ao Kaggle.
+
+Autenticação: `~/.kaggle/kaggle.json` ou `KAGGLE_API_TOKEN`.
+
+Uso:
+    python scripts/upload_kaggle_secrets.py
+    python scripts/upload_kaggle_secrets.py --message "rotate drive token"
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import shutil
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+SECRETS_DIR = REPO_ROOT / "secrets"
+DATASET_FILES = ("drive_token.json", "earthengine_credentials.json")
+
+
+def _kaggle_executable() -> str:
+    """Localiza o CLI do Kaggle (venv atual ou PATH)."""
+    candidates = [Path(sys.executable).with_name("kaggle")]
+    found = shutil.which("kaggle")
+    if found:
+        candidates.append(Path(found))
+    for candidate in candidates:
+        if candidate.is_file():
+            return str(candidate)
+    raise RuntimeError(
+        "Kaggle CLI não encontrado. Instale no ambiente virtual com "
+        "`.venv/bin/pip install kaggle`."
+    )
+
+
+def _run(cli: str, args: list[str], echo: bool = True) -> tuple[int, str]:
+    """Executa um subcomando do CLI e devolve (código, saída combinada)."""
+    result = subprocess.run([cli, *args], text=True, capture_output=True)
+    output = f"{result.stdout}\n{result.stderr}".strip()
+    if echo and output:
+        print(output)
+    return result.returncode, output
+
+
+def _authenticated_username(cli: str) -> str | None:
+    """Lê o usuário autenticado em `kaggle config view`."""
+    _, output = _run(cli, ["config", "view"], echo=False)
+    for line in output.splitlines():
+        if line.strip().startswith("- username:"):
+            return line.split(":", 1)[1].strip()
+    return None
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--dataset-id", default=None, help="owner/slug (padrão: config.yaml)")
+    parser.add_argument("--message", default="Atualiza tokens do projeto", help="mensagem da versão")
+    parser.add_argument("--create", action="store_true", help="força a criação do dataset")
+    args = parser.parse_args()
+
+    sys.path.insert(0, str(REPO_ROOT))
+    from src.config import get_config
+
+    dataset_id = args.dataset_id or get_config()["secrets"]["kaggle_dataset"]
+    missing = [name for name in DATASET_FILES if not (SECRETS_DIR / name).is_file()]
+    if missing:
+        raise FileNotFoundError(f"Tokens ausentes em {SECRETS_DIR}: {missing}")
+
+    cli = _kaggle_executable()
+    username = _authenticated_username(cli)
+    owner = dataset_id.split("/")[0]
+    if username and owner != username:
+        raise SystemExit(
+            f"O dataset '{dataset_id}' pertence a '{owner}', mas a conta autenticada "
+            f"é '{username}'. Use --dataset-id {username}/tcc-secrets ou ajuste "
+            "secrets.kaggle_dataset em src/config.yaml."
+        )
+
+    with tempfile.TemporaryDirectory() as staging:
+        staging_path = Path(staging)
+        for name in DATASET_FILES:
+            shutil.copy2(SECRETS_DIR / name, staging_path / name)
+        metadata = {
+            "id": dataset_id,
+            "title": dataset_id.split("/")[-1].replace("-", " "),
+            "licenses": [{"name": "CC0-1.0"}],
+        }
+        (staging_path / "dataset-metadata.json").write_text(
+            json.dumps(metadata, indent=2) + "\n", encoding="utf-8"
+        )
+
+        exists = False if args.create else _run(
+            cli, ["datasets", "files", dataset_id], echo=False
+        )[0] == 0
+        if exists:
+            code, output = _run(
+                cli, ["datasets", "version", "-p", str(staging_path), "-m", args.message]
+            )
+        else:
+            code, output = _run(cli, ["datasets", "create", "-p", str(staging_path)])
+
+    if code != 0 or "error" in output.lower():
+        raise SystemExit(
+            "Falha ao publicar o dataset. Verifique a autenticação do Kaggle "
+            "(kaggle auth login) e o slug/dono do dataset."
+        )
+    print(f"Dataset publicado: {dataset_id}")
+    print("Anexe-o uma vez em Input > Add Input (ou use dataset_sources no kernel-metadata).")
+
+
+if __name__ == "__main__":
+    main()

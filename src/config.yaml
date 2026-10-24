@@ -72,6 +72,11 @@ ground_truth:
 gee:
   project: "articulate-case-508513-m4"  # ID do projeto Cloud do Earth Engine
 
+secrets:
+  # Dataset privado do Kaggle anexado aos notebooks como input; o fallback de
+  # get_secret lê os tokens em /kaggle/input/<slug>/ sem anexar Secrets por notebook.
+  kaggle_dataset: "jotap1101kaggle/tcc-secrets"
+
 storage:
   drive_root: "tcc"  # pasta canônica na raiz do Google Drive (MyDrive/<drive_root>)
   subfolders:
