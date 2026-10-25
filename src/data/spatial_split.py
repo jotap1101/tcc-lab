@@ -15,6 +15,7 @@ numpy puro evita dependência do scikit-learn (cuja importação de numpy.testin
 
 from __future__ import annotations
 
+import hashlib
 import io as stdlib_io
 import json
 from pathlib import Path
@@ -26,13 +27,14 @@ import pandas as pd
 from src.config import get_config
 from src.data.mask_utils import reference_year
 from src.data.patch_generation import (
+    BBOX_SCHEMA_VERSION,
     load_manifest,
     manifest_path,
     patch_fingerprint_hash,
     require_manifest,
 )
 
-SPLIT_SCHEMA_VERSION = 1
+SPLIT_SCHEMA_VERSION = 2
 
 
 def split_meta_path(storage_paths: dict[str, Path], source_name: str) -> Path:
@@ -122,6 +124,7 @@ def split_meta_payload(storage_paths: dict[str, Path], source_name: str) -> dict
         "schema_version": SPLIT_SCHEMA_VERSION,
         "source_name": source_name,
         "manifest_fingerprint_hash": patch_fingerprint_hash(storage_paths, source_name),
+        "bbox_schema_version": BBOX_SCHEMA_VERSION,
         "fold_count": fold_count(),
         "seed": split_seed(),
     }
@@ -144,6 +147,23 @@ def split_is_current(storage_paths: dict[str, Path], source_name: str) -> bool:
     if any(stored.get(key) != value for key, value in current.items()):
         return False
     return bool(load_manifest(storage_paths, source_name)["fold"].notna().all())
+
+
+def split_fingerprint_hash(storage_paths: dict[str, Path], source_name: str) -> str:
+    """Hash estável da atribuição patch→dobra (detecta mudanças no split).
+
+    Usado pelo trainer para não reutilizar pesos de uma divisão anterior quando
+    apenas a atribuição espacial mudou (ex.: correção do cálculo de `bbox`).
+    """
+    manifest = load_manifest(storage_paths, source_name)
+    if not manifest["fold"].notna().all():
+        raise ValueError(f"Divisão {source_name} incompleta; execute o estágio 07 antes.")
+    pairs = sorted(
+        (str(patch_id), int(fold))
+        for patch_id, fold in zip(manifest["patch_id"], manifest["fold"], strict=True)
+    )
+    blob = "\n".join(f"{patch_id}:{fold}" for patch_id, fold in pairs)
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:12]
 
 
 def _write_manifest(path: Path, manifest: pd.DataFrame, storage_paths: dict[str, Path]) -> None:

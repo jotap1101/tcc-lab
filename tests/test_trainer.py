@@ -223,6 +223,28 @@ def test_train_fold_retrains_when_dataset_fingerprint_changes(tmp_path, monkeypa
     assert refreshed["manifest_fingerprint_hash"] != "fingerprint-antigo"
 
 
+def test_train_fold_retrains_when_split_changes(tmp_path, monkeypatch) -> None:
+    """Mudança apenas na atribuição das dobras deve forçar o retreino."""
+    monkeypatch.setattr("src.io.detect_platform", lambda: "local")
+    monkeypatch.setattr("src.trainer.get_config", lambda: _training_config())
+    paths = _write_dataset(tmp_path)
+    train_fold(
+        _small_model(), "unet", paths, fold=0, device=torch.device("cpu"), source_name=TEST_SOURCE
+    )
+
+    metrics_file = metrics_path(paths, "unet", TEST_SOURCE, 0)
+    payload = json.loads(metrics_file.read_text(encoding="utf-8"))
+    payload["split_fingerprint_hash"] = "split-antigo"
+    metrics_file.write_text(json.dumps(payload), encoding="utf-8")
+
+    result = train_fold(
+        _small_model(), "unet", paths, fold=0, device=torch.device("cpu"), source_name=TEST_SOURCE
+    )
+    assert not result.skipped
+    refreshed = json.loads(metrics_file.read_text(encoding="utf-8"))
+    assert refreshed["split_fingerprint_hash"] != "split-antigo"
+
+
 def test_commit_sha_falls_back_to_bootstrap_file(tmp_path, monkeypatch) -> None:
     """Sem git, o SHA deve vir do arquivo gravado pelo bootstrap."""
     from src import trainer
@@ -275,6 +297,7 @@ def test_run_metadata_and_save(tmp_path, monkeypatch) -> None:
     assert len(meta["config_hash"]) == 12
     assert "commit_sha" in meta
     assert "manifest_fingerprint_hash" in meta
+    assert "split_fingerprint_hash" in meta
     assert "environment" in meta
 
     saved = save_run_metadata(paths, "unet", TEST_SOURCE)

@@ -31,6 +31,7 @@ from src.data.preprocessing import composite_file_name, composite_path
 from src.data.raster_utils import same_grid
 
 MANIFEST_SCHEMA_VERSION = 2
+BBOX_SCHEMA_VERSION = 1  # versão do cálculo de `bbox` (invalida o manifesto, não os patches)
 
 
 def image_patches_dir(
@@ -91,12 +92,18 @@ def patch_bbox(transform: Any, row: int, col: int, patch_size: int) -> str:
     """Bounding box geográfica (minx,miny,maxx,maxy) de um patch no CRS do tile.
 
     Calculada diretamente da transformação afim (atributos a..f), sem depender
-    de helpers de janela do rasterio — compatível com qualquer versão.
+    de helpers de janela do rasterio — compatível com qualquer versão. ``row`` e
+    ``col`` são índices do grid de patches; a origem em pixels é
+    ``(col * patch_size, row * patch_size)``.
     """
-    left = transform.c + transform.a * col + transform.b * row
-    top = transform.f + transform.d * col + transform.e * row
-    right = transform.c + transform.a * (col + patch_size) + transform.b * (row + patch_size)
-    bottom = transform.f + transform.d * (col + patch_size) + transform.e * (row + patch_size)
+    left_px = col * patch_size
+    top_px = row * patch_size
+    right_px = left_px + patch_size
+    bottom_px = top_px + patch_size
+    left = transform.c + transform.a * left_px + transform.b * top_px
+    top = transform.f + transform.d * left_px + transform.e * top_px
+    right = transform.c + transform.a * right_px + transform.b * bottom_px
+    bottom = transform.f + transform.d * right_px + transform.e * bottom_px
     return f"{left:.2f},{bottom:.2f},{right:.2f},{top:.2f}"
 
 
@@ -176,6 +183,8 @@ def manifest_is_current(storage_paths: dict[str, Path], source_name: str) -> boo
     try:
         stored = json.loads(local_meta.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError):
+        return False
+    if stored.get("bbox_schema_version") != BBOX_SCHEMA_VERSION:
         return False
     return stored.get("fingerprint_hash") == patch_fingerprint_hash(storage_paths, source_name)
 
@@ -326,6 +335,7 @@ def generate_patches(storage_paths: dict[str, Path], source_name: str) -> Path:
     _write_manifest(manifest, records, storage_paths)
     meta = {
         "fingerprint_hash": fingerprint_hash,
+        "bbox_schema_version": BBOX_SCHEMA_VERSION,
         "grid": {"rows": rows, "cols": cols},
         "n_patches": len(records),
         "discarded_invalid": discarded_invalid,

@@ -1,6 +1,7 @@
 """Testes de src/data/patch_generation.py (patches 512x512 + manifesto por fonte)."""
 
 import copy
+import json
 from pathlib import Path
 
 import numpy as np
@@ -14,6 +15,8 @@ from src.data.patch_generation import (
     image_patches_dir,
     load_manifest,
     manifest_has_folds,
+    manifest_is_current,
+    manifest_meta_path,
     manifest_path,
     patch_bbox,
     patch_fingerprint_hash,
@@ -146,12 +149,15 @@ def test_patch_id_is_deterministic() -> None:
 
 
 def test_patch_bbox_derived_from_affine() -> None:
-    """A bbox geográfica deve derivar da transformação afim (independente de versão)."""
+    """A bbox deve usar a origem em pixels (row/col * patch_size) da transformação."""
     from rasterio.transform import Affine
 
     transform = Affine(10.0, 0.0, 300000.0, 0.0, -10.0, 7780000.0)
+    assert patch_bbox(transform, row=0, col=0, patch_size=2) == (
+        "300000.00,7779980.00,300020.00,7780000.00"
+    )
     assert patch_bbox(transform, row=1, col=2, patch_size=2) == (
-        "300020.00,7779970.00,300040.00,7779990.00"
+        "300040.00,7779960.00,300060.00,7779980.00"
     )
 
 
@@ -233,6 +239,20 @@ def test_generate_patches_idempotent(tmp_path, monkeypatch) -> None:
     assert manifest.is_file()
     for path in patches:
         assert path.stat().st_mtime_ns == mtimes[path]
+
+
+def test_manifest_is_current_requires_current_bbox_schema(tmp_path, monkeypatch) -> None:
+    """Manifesto gerado com cálculo de bbox antigo deve ser considerado desatualizado."""
+    paths, _, _ = _write_inputs(tmp_path, monkeypatch)
+    generate_patches(paths, TEST_SOURCE)
+    assert manifest_is_current(paths, TEST_SOURCE)
+
+    meta_path = manifest_meta_path(paths, TEST_SOURCE)
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    meta.pop("bbox_schema_version")
+    meta_path.write_text(json.dumps(meta), encoding="utf-8")
+
+    assert not manifest_is_current(paths, TEST_SOURCE)
 
 
 def test_generate_patches_versions_stale_inputs(tmp_path, monkeypatch) -> None:

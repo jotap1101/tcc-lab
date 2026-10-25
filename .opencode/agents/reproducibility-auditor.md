@@ -38,7 +38,7 @@ You are a computational reproducibility auditor for this research project. Your 
 - `manifest_<fonte>.parquet` present and registering every dataset version used, including `valid_fraction`; patches below `data.min_valid_fraction` are discarded and remaining invalid pixels use the ignore label `-1`.
 - Heavy artifacts (`data/`, `models/`, `artifacts/`) kept out of git but referenced consistently by manifest or config.
 - Storage idempotent: derived artifacts are reused only with matching input fingerprint/config hash and regenerated in place otherwise; historical baselines are archived as `*_v1` (e.g., `emater_v1`, `archive_v1`).
-- Per-fold metrics store `manifest_fingerprint_hash` and `config_hash`; stale artifacts trigger automatic retraining.
+- Per-fold metrics store `manifest_fingerprint_hash`, `split_fingerprint_hash` and `config_hash`; stale artifacts trigger automatic retraining.
 - Notebooks committed with cleared outputs (no saved cell outputs/platform paths).
 - Inputs/outputs of each stage resolvable to unique identifiers (patch ids, model checkpoint paths, metrics files).
 

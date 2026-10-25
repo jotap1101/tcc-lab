@@ -16,6 +16,7 @@ from src.data.spatial_split import (
     save_split_figure,
     spatial_fold_centroids,
     split_figure_file_name,
+    split_fingerprint_hash,
     verify_split,
 )
 
@@ -174,6 +175,22 @@ def test_verify_split_reports_per_fold(tmp_path, monkeypatch) -> None:
     assert stats["n_patches"] == 40
     assert len(stats["per_fold"]) == 5
     assert sum(row["n_patches"] for row in stats["per_fold"]) == 40
+
+
+def test_split_fingerprint_hash_tracks_assignment(tmp_path, monkeypatch) -> None:
+    """O hash da divisão deve mudar quando a atribuição patch→dobra muda."""
+    import pandas as pd
+
+    monkeypatch.setattr("src.io.detect_platform", lambda: "local")
+    paths, manifest_file = _write_manifest(tmp_path)
+    assign_spatial_folds(paths, TEST_SOURCE)
+    first = split_fingerprint_hash(paths, TEST_SOURCE)
+
+    frame = pd.read_parquet(manifest_file)
+    frame.loc[0, "fold"] = (int(frame.loc[0, "fold"]) + 1) % 5
+    frame.to_parquet(manifest_file, index=False)
+
+    assert split_fingerprint_hash(paths, TEST_SOURCE) != first
 
 
 def test_save_split_figure_idempotent(tmp_path, monkeypatch) -> None:

@@ -45,6 +45,6 @@ Use before publishing artifacts, after changing training/inference code, or when
 
 ### Environment logging
 - [ ] Every run logs versions, seeds, config hash, commit SHA (git or `src/.tcc_commit`), and dataset manifest fingerprint.
-- [ ] Per-fold metrics store `manifest_fingerprint_hash` and `config_hash`, so stale artifacts trigger automatic retraining.
+- [ ] Per-fold metrics store `manifest_fingerprint_hash`, `split_fingerprint_hash` and `config_hash`, so stale artifacts trigger automatic retraining.
 - [ ] Secrets (GEE, Hugging Face, Kaggle) never appear in logs, config, or code — environment variables only.
 - [ ] Authentication is executed inside notebook code cells (e.g., GEE via OAuth with the primary account using `ee.Authenticate()`), reading credentials from environment variables — no external or manual authentication step.

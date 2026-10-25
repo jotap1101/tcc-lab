@@ -30,6 +30,7 @@ from src.data.dataset import build_loaders
 from src.data.mask_utils import reference_year
 from src.data.patch_generation import patch_fingerprint_hash
 from src.data.source_decision import chosen_source
+from src.data.spatial_split import split_fingerprint_hash
 from src.losses import SegmentationLoss
 from src.metrics import SegmentationMetrics
 from src.utils import set_all_seeds
@@ -176,6 +177,7 @@ def train_fold(
     history_file = history_path(storage_paths, model_name, source, fold)
 
     current_fingerprint = patch_fingerprint_hash(storage_paths, source)
+    current_split = split_fingerprint_hash(storage_paths, source)
     current_config_hash = _config_hash()
 
     if not force and fold_training_done(storage_paths, model_name, source, fold):
@@ -183,6 +185,7 @@ def train_fold(
         # Só reutiliza quando os artefatos correspondem ao dataset e à config atuais.
         if (
             saved.get("manifest_fingerprint_hash") == current_fingerprint
+            and saved.get("split_fingerprint_hash") == current_split
             and saved.get("config_hash") == current_config_hash
         ):
             print(f"[{model_name}] dobra {fold} já treinada (artefatos reutilizados).")
@@ -201,7 +204,7 @@ def train_fold(
             )
         print(
             f"[{model_name}] dobra {fold}: artefatos desatualizados "
-            "(dataset/config mudaram); retreinando."
+            "(dataset/split/config mudaram); retreinando."
         )
 
     set_all_seeds(fold_seed)
@@ -265,6 +268,7 @@ def train_fold(
             "seed": fold_seed,
             "best_epoch": best_epoch,
             "manifest_fingerprint_hash": current_fingerprint,
+            "split_fingerprint_hash": current_split,
             "config_hash": current_config_hash,
             "train": best_train,
             "val": best_val,
@@ -371,6 +375,7 @@ def run_metadata(
         "weight_decay": float(training["weight_decay"]),
         "num_workers": int(training["num_workers"]),
         "manifest_fingerprint_hash": patch_fingerprint_hash(storage_paths, source_name),
+        "split_fingerprint_hash": split_fingerprint_hash(storage_paths, source_name),
         "environment": _package_versions(),
     }
 
