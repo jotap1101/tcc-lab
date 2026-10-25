@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import importlib.util
+import subprocess
 from pathlib import Path
 
 import numpy as np
@@ -10,6 +12,7 @@ from src.setup import (
     canonicalize_distribution_name,
     detect_loaded_mismatches,
     parse_pinned_requirements,
+    remove_incompatible_torchaudio,
     requirements_satisfied,
 )
 
@@ -46,3 +49,33 @@ def test_detect_loaded_mismatches_flags_stale_compiled_extension() -> None:
 def test_detect_loaded_mismatches_ignores_unloaded_modules() -> None:
     """Bibliotecas ainda não importadas não exigem reinício do kernel."""
     assert detect_loaded_mismatches({"numpy": "2.5.3"}, {}) == {}
+
+
+def test_remove_incompatible_torchaudio_noop_when_absent(monkeypatch) -> None:
+    """Sem torchaudio instalado, o helper não deve remover nada."""
+    real_find_spec = importlib.util.find_spec
+    monkeypatch.setattr(
+        "importlib.util.find_spec",
+        lambda name, *args: None if name == "torchaudio" else real_find_spec(name, *args),
+    )
+    assert remove_incompatible_torchaudio() is False
+
+
+def test_remove_incompatible_torchaudio_removes_when_probe_fails(monkeypatch) -> None:
+    """Um torchaudio que não importa deve ser removido do ambiente."""
+    real_find_spec = importlib.util.find_spec
+    calls: list[list[str]] = []
+
+    def fake_run(command: list[str], **kwargs) -> subprocess.CompletedProcess[str]:
+        calls.append(command)
+        failed_probe = command[2] == "import torchaudio"
+        return subprocess.CompletedProcess(command, 1 if failed_probe else 0, "", "")
+
+    monkeypatch.setattr(
+        "importlib.util.find_spec",
+        lambda name, *args: object() if name == "torchaudio" else real_find_spec(name, *args),
+    )
+    monkeypatch.setattr("subprocess.run", fake_run)
+
+    assert remove_incompatible_torchaudio() is True
+    assert any("uninstall" in command for command in calls)

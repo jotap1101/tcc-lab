@@ -8,6 +8,7 @@ configuração, expondo um único ``initialize()`` que retorna um ``RuntimeConte
 from __future__ import annotations
 
 import importlib.metadata
+import importlib.util
 import re
 import subprocess
 import sys
@@ -141,6 +142,50 @@ def _restart_kernel() -> None:
             "Reinicie a sessão manualmente para recarregar as dependências instaladas."
         )
     kernel.do_shutdown(restart=True)
+
+
+def remove_incompatible_torchaudio() -> bool:
+    """Remove um ``torchaudio`` incompatível que impede o import do Transformers.
+
+    O ``transformers`` importa ``torchaudio`` indiretamente ao carregar modelos.
+    Quando o ``torchaudio`` do ambiente foi compilado para outra versão de CUDA
+    (comum no Kaggle após instalar o ``torch`` pinado), o import falha. Como o
+    projeto não usa áudio, o pacote é removido apenas quando o import falha,
+    preservando instalações compatíveis. Retorna ``True`` quando removeu o pacote.
+    """
+    if importlib.util.find_spec("torchaudio") is None:
+        return False
+    probe = subprocess.run(
+        [sys.executable, "-c", "import torchaudio"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if probe.returncode == 0:
+        return False
+    print(
+        "torchaudio incompatível detectado; removendo o pacote (não é usado pelo projeto).",
+        flush=True,
+    )
+    removal = subprocess.run(
+        [sys.executable, "-m", "pip", "uninstall", "-y", "torchaudio"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if removal.returncode != 0:
+        raise RuntimeError(
+            "Falha ao remover o torchaudio incompatível; execute "
+            "`pip uninstall -y torchaudio` e reinicie o kernel.\n"
+            f"{removal.stderr.strip()}"
+        )
+    importlib.invalidate_caches()
+    # Se o transformers já foi importado, invalida o cache de disponibilidade.
+    if "transformers.utils.import_utils" in sys.modules:
+        from transformers.utils import import_utils
+
+        import_utils.is_torchaudio_available.cache_clear()
+    return True
 
 
 def install_runtime_requirements(requirements_path: Path) -> None:
