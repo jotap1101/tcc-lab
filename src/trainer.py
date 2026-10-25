@@ -232,13 +232,15 @@ def train_fold(
 
     for epoch in range(epochs):
         augmentation.set_seed(fold_seed + epoch)
+        # Captura o LR vigente antes do passo do scheduler (valor usado nesta época).
+        epoch_lr = float(optimizer.param_groups[0]["lr"])
         train_stats = _run_epoch(train_loader, model, loss_fn, optimizer, device, training=True)
         scheduler.step()
         val_stats = _run_epoch(val_loader, model, loss_fn, None, device, training=False)
         history.append(
             {
                 "epoch": epoch + 1,
-                "lr": float(optimizer.param_groups[0]["lr"]),
+                "lr": epoch_lr,
                 **{f"train_{key}": value for key, value in train_stats.items()},
                 **{f"val_{key}": value for key, value in val_stats.items()},
             }
