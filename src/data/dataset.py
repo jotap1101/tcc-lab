@@ -3,9 +3,11 @@
 Constroi os `Dataset`/`DataLoader` a partir do manifesto (estágio 06/07) e das
 estatísticas de normalização (estágio 08). Cada patch de imagem é normalizado
 com a média/desvio por banda e tem os NaN imputados com a média da banda antes
-da padronização. A divisão por dobra é espacial (`fold` do manifesto): a dobra
-de validação fica de fora do treino. A carga em lote é determinística
-(semente por dobra no shuffle) e prepara cópias locais no Kaggle.
+da padronização. Pixels inválidos (NaN em alguma banda, isto é, fora do AOI)
+recebem rótulo -1 na máscara e são ignorados pela perda e pelas métricas. A
+divisão por dobra é espacial (`fold` do manifesto): a dobra de validação fica de
+fora do treino. A carga em lote é determinística (semente por dobra no shuffle)
+e prepara cópias locais no Kaggle.
 """
 
 from __future__ import annotations
@@ -126,8 +128,10 @@ class PatchDataset(Dataset):
         record = self.records.iloc[index]
         image = np.load(self._ensure_local(str(record["image_path"])))
         mask = np.load(self._ensure_local(str(record["mask_path"])))
+        # Pixels sem observação válida (NaN) são marcados com rótulo -1 e ignorados.
+        valid = np.isfinite(image).all(axis=0)
         image = normalize_patch(image, self.stats)
-        mask = (mask > 0).astype(np.float32)
+        mask = np.where(valid, (mask > 0).astype(np.float32), -1.0).astype(np.float32)
         image_tensor = torch.from_numpy(image)
         mask_tensor = torch.from_numpy(mask).unsqueeze(0)
         if self.transform is not None:

@@ -226,14 +226,14 @@ def split_figure_file_name(source_name: str) -> str:
 
 
 def save_split_figure(storage_paths: dict[str, Path], source_name: str) -> Path:
-    """Persiste a figura da divisão espacial da fonte no Drive canônico (idempotente)."""
+    """Persiste a figura da divisão espacial da fonte (regenerada a cada execução).
+
+    A figura é derivada do manifesto vigente; regenerá-la evita manter uma
+    divisão desatualizada após mudanças no dataset do estágio 06.
+    """
     from src import io
 
     figure_path = storage_paths["artifacts_figures"] / split_figure_file_name(source_name)
-    if io.path_exists(figure_path):
-        print(f"Figura já existente (reutilizada): {figure_path}")
-        return figure_path
-
     manifest = load_manifest(storage_paths, source_name)
     io.persist_bytes(figure_path, render_split_figure(manifest))
     print(f"Figura salva em: {figure_path}")

@@ -70,6 +70,32 @@ def test_download_and_extract_preserves_workspace_on_invalid_tarball(
     assert requirements.read_text() == "keep"
 
 
+def test_write_commit_file_persists_sha(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """O SHA retornado pela API deve ser gravado em src/.tcc_commit."""
+    workspace = tmp_path / "workspace"
+    (workspace / "src").mkdir(parents=True)
+    monkeypatch.setattr(bootstrap, "_fetch_commit_sha", lambda: "abc123def456")
+
+    bootstrap._write_commit_file(workspace)
+
+    assert (workspace / "src" / bootstrap.COMMIT_FILE_NAME).read_text().strip() == "abc123def456"
+
+
+def test_write_commit_file_skips_when_api_fails(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Sem SHA disponível, nenhum arquivo deve ser criado."""
+    workspace = tmp_path / "workspace"
+    (workspace / "src").mkdir(parents=True)
+    monkeypatch.setattr(bootstrap, "_fetch_commit_sha", lambda: None)
+
+    bootstrap._write_commit_file(workspace)
+
+    assert not (workspace / "src" / bootstrap.COMMIT_FILE_NAME).exists()
+
+
 def test_resolve_repo_dir_rejects_ambiguous_layout(tmp_path: pathlib.Path) -> None:
     """Mais de um diretório extraído indica estrutura inesperada do tarball."""
     (tmp_path / "repo-a").mkdir()

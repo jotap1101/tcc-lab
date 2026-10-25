@@ -245,3 +245,7 @@ data/*
 *.pt
 *.pth
 *.onnx
+
+# Bootstrap do runtime (gerado no workspace pelos notebooks)
+/bootstrap.py
+/src/.tcc_commit

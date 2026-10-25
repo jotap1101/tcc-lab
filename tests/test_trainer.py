@@ -164,6 +164,25 @@ def test_train_fold_persists_artifacts(tmp_path, monkeypatch) -> None:
     }
 
 
+def test_train_fold_handles_invalid_pixels(tmp_path, monkeypatch) -> None:
+    """Pixels inválidos (-1) devem ser ignorados sem quebrar o treino/validação."""
+    monkeypatch.setattr("src.io.detect_platform", lambda: "local")
+    monkeypatch.setattr("src.trainer.get_config", lambda: _training_config())
+    paths = _write_dataset(tmp_path)
+    manifest = pd.read_parquet(paths["data_processed"] / f"manifest_{TEST_SOURCE}.parquet")
+    image_file = tmp_path / str(manifest.loc[0, "image_path"])
+    image = np.load(image_file)
+    image[:, :4, :] = np.nan
+    np.save(image_file, image)
+
+    result = train_fold(
+        _small_model(), "unet", paths, fold=0, device=torch.device("cpu"), source_name=TEST_SOURCE
+    )
+
+    assert not result.skipped
+    assert result.val_metrics["iou"] >= 0.0
+
+
 def test_train_fold_skips_when_done(tmp_path, monkeypatch) -> None:
     """Reexecuções devem reutilizar os artefatos sem retreinar."""
     monkeypatch.setattr("src.io.detect_platform", lambda: "local")
@@ -180,6 +199,43 @@ def test_train_fold_skips_when_done(tmp_path, monkeypatch) -> None:
 
     assert result.skipped
     assert weights_path(paths, "unet", TEST_SOURCE, 0).stat().st_mtime_ns == mtime
+
+
+def test_train_fold_retrains_when_dataset_fingerprint_changes(tmp_path, monkeypatch) -> None:
+    """Artefatos de uma versão anterior do dataset não devem ser reutilizados."""
+    monkeypatch.setattr("src.io.detect_platform", lambda: "local")
+    monkeypatch.setattr("src.trainer.get_config", lambda: _training_config())
+    paths = _write_dataset(tmp_path)
+    train_fold(
+        _small_model(), "unet", paths, fold=0, device=torch.device("cpu"), source_name=TEST_SOURCE
+    )
+
+    metrics_file = metrics_path(paths, "unet", TEST_SOURCE, 0)
+    payload = json.loads(metrics_file.read_text(encoding="utf-8"))
+    payload["manifest_fingerprint_hash"] = "fingerprint-antigo"
+    metrics_file.write_text(json.dumps(payload), encoding="utf-8")
+
+    result = train_fold(
+        _small_model(), "unet", paths, fold=0, device=torch.device("cpu"), source_name=TEST_SOURCE
+    )
+    assert not result.skipped
+    refreshed = json.loads(metrics_file.read_text(encoding="utf-8"))
+    assert refreshed["manifest_fingerprint_hash"] != "fingerprint-antigo"
+
+
+def test_commit_sha_falls_back_to_bootstrap_file(tmp_path, monkeypatch) -> None:
+    """Sem git, o SHA deve vir do arquivo gravado pelo bootstrap."""
+    from src import trainer
+
+    class _FailedProcess:
+        returncode = 1
+        stdout = ""
+
+    monkeypatch.setattr(trainer.subprocess, "run", lambda *args, **kwargs: _FailedProcess())
+    commit_file = tmp_path / ".tcc_commit"
+    commit_file.write_text("abc123def456\n", encoding="utf-8")
+    assert trainer._commit_sha(commit_file) == "abc123def456"
+    assert trainer._commit_sha(tmp_path / "missing") == "unknown"
 
 
 def test_train_fold_force_retrains(tmp_path, monkeypatch) -> None:

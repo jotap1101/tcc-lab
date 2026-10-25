@@ -2,11 +2,13 @@
 
 Corta o composite normalizado do ano da fonte (estágio 05) e a máscara binária
 da própria fonte (estágio 02), ambos sobre o mesmo grid, em patches de
-`data.patch_size` com sobreposição nula (bordas parciais descartadas), filtra
-pela proporção mínima de café (`data.coffee_min_ratio`) e registra cada patch em
-um manifesto Parquet por fonte (`data/processed/manifest_<fonte>.parquet`) com
-paths relativos à raiz tcc/. Cada fonte habilitada tem o seu próprio conjunto de
-patches e manifesto (mesmo composite por ano quando compartilham o ano).
+`data.patch_size` com sobreposição nula (bordas parciais descartadas), descarta
+patches com fração de pixels válidos abaixo de `data.min_valid_fraction` (área
+fora do AOI), filtra pela proporção mínima de café (`data.coffee_min_ratio`) e
+registra cada patch em um manifesto Parquet por fonte
+(`data/processed/manifest_<fonte>.parquet`) com paths relativos à raiz tcc/. Cada
+fonte habilitada tem o seu próprio conjunto de patches e manifesto (mesmo
+composite por ano quando compartilham o ano).
 A geração é determinística e idempotente: reexecuções reutilizam o manifesto
 vigente (fingerprint de configuração e entradas) e os patches já persistidos,
 escrevendo apenas o que faltar.
@@ -28,7 +30,7 @@ from src.data.mask_utils import reference_year, source_mask_path
 from src.data.preprocessing import composite_file_name, composite_path
 from src.data.raster_utils import same_grid
 
-MANIFEST_SCHEMA_VERSION = 1
+MANIFEST_SCHEMA_VERSION = 2
 
 
 def image_patches_dir(
@@ -141,6 +143,7 @@ def manifest_fingerprint(storage_paths: dict[str, Path], source_name: str) -> di
         "bands": list(config["data"]["bands"]),
         "patch_size": int(config["data"]["patch_size"]),
         "coffee_min_ratio": float(config["data"]["coffee_min_ratio"]),
+        "min_valid_fraction": float(config["data"]["min_valid_fraction"]),
         "mask_source": source_name,
         "tile_id": composite_file_name(year),
         "composite": {"name": composite.name, "size": _file_size(composite, storage_paths)},
@@ -265,6 +268,7 @@ def generate_patches(storage_paths: dict[str, Path], source_name: str) -> Path:
     config = get_config()
     patch_size = int(config["data"]["patch_size"])
     coffee_min_ratio = float(config["data"]["coffee_min_ratio"])
+    min_valid_fraction = float(config["data"]["min_valid_fraction"])
     tile_id = composite_file_name(year)
     mask_source = source_name
     root = _storage_root(storage_paths)
@@ -272,6 +276,7 @@ def generate_patches(storage_paths: dict[str, Path], source_name: str) -> Path:
     records: list[dict[str, Any]] = []
     written_patches = 0
     reused_patches = 0
+    discarded_invalid = 0
     with rasterio.open(composite_local) as comp, rasterio.open(mask_local) as m:
         _check_same_grid(comp, m)
         rows, cols = grid_dims(int(m.height), int(m.width), patch_size)
@@ -282,7 +287,15 @@ def generate_patches(storage_paths: dict[str, Path], source_name: str) -> Path:
                 window = Window(col * patch_size, row * patch_size, patch_size, patch_size)
                 image_win = comp.read(window=window)
                 mask_win = m.read(1, window=window)
-                coffee_ratio = float(np.mean(mask_win > 0))
+                # Pixels fora do AOI chegam como NaN em todas as bandas.
+                valid_pixels = np.isfinite(image_win).all(axis=0)
+                valid_fraction = float(np.mean(valid_pixels))
+                # Patches sem nenhum pixel válido são sempre descartados.
+                if valid_fraction <= 0.0 or valid_fraction < min_valid_fraction:
+                    discarded_invalid += 1
+                    continue
+                # A proporção de café é medida apenas na área válida do patch.
+                coffee_ratio = float(np.mean(mask_win[valid_pixels] > 0))
                 if coffee_ratio < coffee_min_ratio:
                     continue
                 pid = patch_id(tile_id, row, col)
@@ -303,6 +316,7 @@ def generate_patches(storage_paths: dict[str, Path], source_name: str) -> Path:
                         "col": col,
                         "bbox": patch_bbox(m.transform, row, col, patch_size),
                         "coffee_ratio": coffee_ratio,
+                        "valid_fraction": valid_fraction,
                         "mask_source": mask_source,
                         "image_path": str(image_target.relative_to(root)),
                         "mask_path": str(mask_target.relative_to(root)),
@@ -310,9 +324,18 @@ def generate_patches(storage_paths: dict[str, Path], source_name: str) -> Path:
                 )
 
     _write_manifest(manifest, records, storage_paths)
-    meta = {"fingerprint_hash": fingerprint_hash, "grid": {"rows": rows, "cols": cols}}
+    meta = {
+        "fingerprint_hash": fingerprint_hash,
+        "grid": {"rows": rows, "cols": cols},
+        "n_patches": len(records),
+        "discarded_invalid": discarded_invalid,
+        "min_valid_fraction": min_valid_fraction,
+    }
     _write_metadata(manifest_meta_path(storage_paths, source_name), meta, storage_paths)
-    print(f"Patches {source_name} gerados: {written_patches} novos, {reused_patches} reutilizados.")
+    print(
+        f"Patches {source_name} gerados: {written_patches} novos, {reused_patches} reutilizados, "
+        f"{discarded_invalid} descartados por pixels válidos < {min_valid_fraction:.0%}."
+    )
     print(f"Manifesto salvo em: {manifest}")
     return manifest
 
@@ -324,6 +347,7 @@ def verify_manifest(storage_paths: dict[str, Path], source_name: str) -> dict[st
     manifest = load_manifest(storage_paths, source_name)
     with_coffee = manifest["coffee_ratio"] > 0
     ratios = manifest["coffee_ratio"]
+    valid = manifest.get("valid_fraction")
     first_image = io.ensure_local_copy(
         resolve_from_root(str(manifest.loc[0, "image_path"]), storage_paths)
     )
@@ -335,6 +359,15 @@ def verify_manifest(storage_paths: dict[str, Path], source_name: str) -> dict[st
             "mean": float(ratios.mean()),
             "max": float(ratios.max()),
         },
+        "valid_fraction": (
+            {
+                "min": float(valid.min()),
+                "mean": float(valid.mean()),
+                "max": float(valid.max()),
+            }
+            if valid is not None
+            else None
+        ),
         "patch_shape": list(np.load(first_image).shape),
         "mask_source": sorted(manifest["mask_source"].dropna().unique().tolist()),
         "tile_id": sorted(manifest["tile_id"].dropna().unique().tolist()),
@@ -351,14 +384,14 @@ def patch_montage_file_name(source_name: str) -> str:
 
 
 def save_patch_montage(storage_paths: dict[str, Path], source_name: str) -> Path:
-    """Persiste a figura do mosaico de amostras da fonte no Drive canônico (idempotente)."""
+    """Persiste a figura do mosaico de amostras da fonte (regenerada a cada execução).
+
+    A figura é derivada do manifesto vigente; regenerá-la evita manter amostras
+    desatualizadas após mudanças no dataset do estágio 06.
+    """
     from src import io
 
     figure_path = storage_paths["artifacts_figures"] / patch_montage_file_name(source_name)
-    if io.path_exists(figure_path):
-        print(f"Figura já existente (reutilizada): {figure_path}")
-        return figure_path
-
     manifest = load_manifest(storage_paths, source_name)
     samples = manifest.sort_values("coffee_ratio", ascending=False).head(3)
     io.persist_bytes(figure_path, render_patch_montage(samples, storage_paths))

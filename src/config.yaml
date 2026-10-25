@@ -18,6 +18,11 @@ data:
   cloud_threshold: 20  # porcentagem máxima de nuvens (QA60)
   patch_size: 512
   coffee_min_ratio: 0.0
+  # Fração mínima de pixels válidos (não-NaN) para manter um patch. Descarta
+  # patches totalmente fora do AOI, que só adicionariam fundo artificial ao
+  # treino e à validação; pixels inválidos restantes são ignorados por perda e
+  # métricas (rótulo -1) no dataset.
+  min_valid_fraction: 0.10
   crs: "EPSG:31983"  # SIRGAS 2000 / UTM 23S (zona UTM da RGI de Guaxupé)
   export:
     scale: 10  # resolução nativa das bandas B2/B3/B4/B8 (10 m)

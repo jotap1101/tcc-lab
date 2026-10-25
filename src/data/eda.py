@@ -247,14 +247,15 @@ def run_sanity_checks(
 
 
 def save_eda_figure(storage_paths: dict[str, Path], source_name: str) -> Path:
-    """Persiste a figura de resumo da EDA da fonte no Drive canônico (idempotente)."""
+    """Persiste a figura de resumo da EDA da fonte (regenerada a cada execução).
+
+    A figura é derivada do manifesto e das estatísticas vigentes; regenerá-la
+    garante que reexecuções após mudanças no dataset não mantenham figuras
+    desatualizadas.
+    """
     from src import io
 
     figure_path = storage_paths["artifacts_figures"] / eda_figure_file_name(source_name)
-    if io.path_exists(figure_path):
-        print(f"Figura já existente (reutilizada): {figure_path}")
-        return figure_path
-
     manifest = load_manifest(storage_paths, source_name)
     stats = compute_normalization_stats(storage_paths, source_name)
     io.persist_bytes(figure_path, render_eda_figure(manifest, stats, storage_paths))

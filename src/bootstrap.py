@@ -8,14 +8,20 @@ o que resolve o ciclo "precisa de src para baixar src".
 
 from __future__ import annotations
 
+import json
 import os
 import pathlib
+import re
 import shutil
 import sys
 import tarfile
 import urllib.request
 
 REPO_URL = "https://github.com/jotap1101/tcc-lab"
+COMMIT_API_URL = "https://api.github.com/repos/jotap1101/tcc-lab/commits/main"
+COMMIT_FEED_URL = "https://github.com/jotap1101/tcc-lab/commits/main.atom"
+COMMIT_FILE_NAME = ".tcc_commit"
+COMMIT_SHA_PATTERN = re.compile(r"Grit::Commit/([0-9a-f]{40})")
 WORKSPACE_COLAB = pathlib.Path("/content")
 WORKSPACE_KAGGLE = pathlib.Path("/kaggle/working")
 DRIVE_MOUNT_POINT = pathlib.Path("/content/drive")
@@ -124,6 +130,52 @@ def _seed_drive_mirror(workspace: pathlib.Path) -> None:
     _refresh(workspace / "data" / "external", mirror / "data" / "external")
 
 
+def _read_url(url: str) -> str | None:
+    """Lê uma URL com User-Agent próprio; retorna None em qualquer falha."""
+    request = urllib.request.Request(url, headers={"User-Agent": "tcc-bootstrap"})
+    try:
+        with urllib.request.urlopen(request, timeout=10) as response:
+            return response.read().decode("utf-8")
+    except Exception:
+        return None
+
+
+def _fetch_commit_sha() -> str | None:
+    """Retorna o SHA do commit atual de `main` (API do GitHub, com fallback Atom).
+
+    Best-effort: falhas de rede, limites de taxa ou respostas inesperadas
+    retornam None, sem interromper o bootstrap.
+    """
+    payload = _read_url(COMMIT_API_URL)
+    if payload:
+        try:
+            data = json.loads(payload)
+        except json.JSONDecodeError:
+            data = None
+        sha = data.get("sha") if isinstance(data, dict) else None
+        if isinstance(sha, str) and len(sha) >= 7:
+            return sha
+
+    feed = _read_url(COMMIT_FEED_URL)
+    match = COMMIT_SHA_PATTERN.search(feed) if feed else None
+    return match.group(1) if match else None
+
+
+def _write_commit_file(workspace: pathlib.Path) -> None:
+    """Grava o SHA do commit em `src/.tcc_commit` (best-effort).
+
+    O tarball não traz `.git`; o arquivo permite ao trainer registrar o commit
+    real na metadata de execução no Colab/Kaggle.
+    """
+    sha = _fetch_commit_sha()
+    if sha is None:
+        return
+    try:
+        (workspace / "src" / COMMIT_FILE_NAME).write_text(f"{sha}\n", encoding="utf-8")
+    except OSError:
+        return
+
+
 def _purge_src_modules() -> None:
     """Remove os módulos src.* em cache para forçar a versão recém-entregue.
 
@@ -140,6 +192,7 @@ def bootstrap_workspace(workspace: pathlib.Path | None = None) -> pathlib.Path:
     if workspace is None:
         workspace = workspace_root()
     _download_and_extract(workspace)
+    _write_commit_file(workspace)
     _purge_src_modules()
     _seed_drive_mirror(workspace)
     if str(workspace) not in sys.path:

@@ -28,6 +28,7 @@ from src.config import get_config
 from src.data.augmentations import SegmentAugmentation
 from src.data.dataset import build_loaders
 from src.data.mask_utils import reference_year
+from src.data.patch_generation import patch_fingerprint_hash
 from src.data.source_decision import chosen_source
 from src.losses import SegmentationLoss
 from src.metrics import SegmentationMetrics
@@ -174,21 +175,33 @@ def train_fold(
     metrics_file = metrics_path(storage_paths, model_name, source, fold)
     history_file = history_path(storage_paths, model_name, source, fold)
 
+    current_fingerprint = patch_fingerprint_hash(storage_paths, source)
+    current_config_hash = _config_hash()
+
     if not force and fold_training_done(storage_paths, model_name, source, fold):
         saved = json.loads(io.ensure_local_copy(metrics_file).read_text(encoding="utf-8"))
-        print(f"[{model_name}] dobra {fold} já treinada (artefatos reutilizados).")
-        return FoldResult(
-            model=model_name,
-            source_name=source,
-            fold=fold,
-            weights_path=weights_file,
-            metrics_path=metrics_file,
-            history_path=history_file,
-            best_epoch=int(saved["best_epoch"]),
-            train_metrics=saved["train"],
-            val_metrics=saved["val"],
-            epochs=epochs,
-            skipped=True,
+        # Só reutiliza quando os artefatos correspondem ao dataset e à config atuais.
+        if (
+            saved.get("manifest_fingerprint_hash") == current_fingerprint
+            and saved.get("config_hash") == current_config_hash
+        ):
+            print(f"[{model_name}] dobra {fold} já treinada (artefatos reutilizados).")
+            return FoldResult(
+                model=model_name,
+                source_name=source,
+                fold=fold,
+                weights_path=weights_file,
+                metrics_path=metrics_file,
+                history_path=history_file,
+                best_epoch=int(saved["best_epoch"]),
+                train_metrics=saved["train"],
+                val_metrics=saved["val"],
+                epochs=epochs,
+                skipped=True,
+            )
+        print(
+            f"[{model_name}] dobra {fold}: artefatos desatualizados "
+            "(dataset/config mudaram); retreinando."
         )
 
     set_all_seeds(fold_seed)
@@ -251,6 +264,8 @@ def train_fold(
             "epochs": epochs,
             "seed": fold_seed,
             "best_epoch": best_epoch,
+            "manifest_fingerprint_hash": current_fingerprint,
+            "config_hash": current_config_hash,
             "train": best_train,
             "val": best_val,
         },
@@ -286,8 +301,16 @@ def _config_hash() -> str:
     return hashlib.sha256(CONFIG_PATH.read_bytes()).hexdigest()[:12]
 
 
-def _commit_sha() -> str:
-    """SHA do commit git em execução (best-effort; 'unknown' quando não disponível)."""
+COMMIT_FILE_NAME = ".tcc_commit"
+
+
+def _commit_sha(commit_file: Path | None = None) -> str:
+    """SHA do commit em execução (git local ou arquivo gravado pelo bootstrap).
+
+    No Colab/Kaggle o `src/` vem de um tarball sem `.git`; nesse caso usa o SHA
+    que o bootstrap grava em `src/.tcc_commit`. Retorna 'unknown' se nenhum dos
+    dois estiver disponível.
+    """
     try:
         completed = subprocess.run(
             ["git", "rev-parse", "HEAD"],
@@ -296,10 +319,18 @@ def _commit_sha() -> str:
             check=False,
             cwd=Path(__file__).resolve().parent,
         )
+        sha = completed.stdout.strip()
+        if completed.returncode == 0 and sha:
+            return sha
+    except OSError:
+        pass
+
+    path = commit_file or Path(__file__).resolve().parent / COMMIT_FILE_NAME
+    try:
+        sha = path.read_text(encoding="utf-8").strip()
     except OSError:
         return "unknown"
-    sha = completed.stdout.strip()
-    return sha if completed.returncode == 0 and sha else "unknown"
+    return sha or "unknown"
 
 
 def _package_versions() -> dict[str, str]:
@@ -345,13 +376,20 @@ def run_metadata(
 
 
 def save_run_metadata(storage_paths: dict[str, Path], model_name: str, source_name: str) -> Path:
-    """Persiste o metadata de execução em artifacts/runs/{model}/{fonte}/run.meta.json."""
+    """Persiste o metadata de execução em artifacts/runs/{model}/{fonte}/run.meta.json.
+
+    Reaproveita o arquivo apenas quando o conteúdo vigente é idêntico; caso
+    contrário, sobrescreve (ex.: fingerprint do dataset ou commit SHA mudou).
+    """
     from src import io
 
     path = storage_paths["artifacts_runs"] / model_name / source_name / "run.meta.json"
+    metadata = run_metadata(model_name, storage_paths, source_name)
     if io.path_exists(path):
-        print(f"Metadata de execução já existente (reutilizado): {path}")
-        return path
-    _persist_json(path, run_metadata(model_name, storage_paths, source_name))
+        stored = json.loads(io.ensure_local_copy(path).read_text(encoding="utf-8"))
+        if stored == metadata:
+            print(f"Metadata de execução já existente e atual (reutilizado): {path}")
+            return path
+    _persist_json(path, metadata)
     print(f"Metadata de execução salvo em: {path}")
     return path

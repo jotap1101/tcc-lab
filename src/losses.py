@@ -5,7 +5,8 @@ A perda combinada segue o mesmo protocolo para U-Net (estágio 09) e SegFormer
 (baseada no mapa de distância assinada, Kervadec et al. 2019) é computada em CPU
 via `scipy.ndimage.distance_transform_edt`, determinística, e o gradiente flui
 apenas pelas probabilidades previstas — o mapa de distância é constante em
-relação aos parâmetros do modelo.
+relação aos parâmetros do modelo. Pixels com rótulo -1 (fora do AOI) são
+ignorados em todos os componentes.
 """
 
 from __future__ import annotations
@@ -21,16 +22,28 @@ FOCAL_GAMMA = 2.0  # ênfase em exemplos difíceis da Focal Loss
 PROB_EPS = 1e-6  # clamp das probabilidades para estabilidade numérica
 
 
+def _valid_mask(targets: torch.Tensor) -> torch.Tensor:
+    """Máscara 0/1 dos pixels com rótulo válido (valores >= 0; -1 é ignorado)."""
+    return (targets >= 0).to(targets.dtype)
+
+
+def _binary_targets(targets: torch.Tensor) -> torch.Tensor:
+    """Converte o alvo em binário, tratando o rótulo de ignorados (-1) como 0."""
+    return targets.clamp(min=0.0)
+
+
 def dice_loss(logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
     """Dice Loss binária (soft, diferenciável) sobre a classe de interesse (café).
 
     Compara a probabilidade prevista (`sigmoid(logits)`) com a máscara binária
     alvo em nível de pixel; retorna 1 - Dice, com valor mínimo 0 para a
-    previsão perfeita.
+    previsão perfeita. Pixels com rótulo -1 não entram no cálculo.
     """
+    valid = _valid_mask(targets)
+    binary = _binary_targets(targets)
     probs = torch.sigmoid(logits)
-    intersection = (probs * targets).sum()
-    cardinality = probs.sum() + targets.sum()
+    intersection = (probs * binary * valid).sum()
+    cardinality = (probs * valid).sum() + (binary * valid).sum()
     dice = (2.0 * intersection + SMOOTH) / (cardinality + SMOOTH)
     return 1.0 - dice
 
@@ -45,13 +58,17 @@ def focal_loss(
 
     Pondera a entropia cruzada por ``(1 - pt)**gamma``, onde ``pt`` é a
     probabilidade atribuída à classe correta; ``alpha`` reequilibra as classes.
+    Pixels com rótulo -1 (fora do AOI) são ignorados.
     """
+    valid = _valid_mask(targets)
+    binary = _binary_targets(targets)
     probs = torch.sigmoid(logits).clamp(PROB_EPS, 1.0 - PROB_EPS)
-    pt = probs * targets + (1.0 - probs) * (1.0 - targets)
+    pt = probs * binary + (1.0 - probs) * (1.0 - binary)
     weights = (1.0 - pt) ** gamma
-    alpha_t = alpha * targets + (1.0 - alpha) * (1.0 - targets)
-    bce = nn.functional.binary_cross_entropy(probs, targets, reduction="none")
-    return (alpha_t * weights * bce).mean()
+    alpha_t = alpha * binary + (1.0 - alpha) * (1.0 - binary)
+    bce = nn.functional.binary_cross_entropy(probs, binary, reduction="none")
+    denominator = valid.sum().clamp_min(1.0)
+    return (alpha_t * weights * bce * valid).sum() / denominator
 
 
 def signed_distance_map(targets: torch.Tensor) -> torch.Tensor:
@@ -82,13 +99,15 @@ def boundary_loss(logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
     Penaliza previsões ponderadas pela distância à fronteira do objeto,
     normalizada pela soma dos valores absolutos do mapa — invariante à escala e
     nula quando o mapa é todo zero (objeto ausente ou preenchendo a cena).
+    Pixels com rótulo -1 (fora do AOI) são ignorados.
     """
-    signed = signed_distance_map(targets).to(logits.device)
+    valid = _valid_mask(targets)
+    signed = signed_distance_map(_binary_targets(targets)).to(logits.device)
     probs = torch.sigmoid(logits)
-    denominator = signed.abs().sum()
+    denominator = (signed.abs() * valid).sum()
     if denominator == 0:
         return torch.zeros((), device=logits.device)
-    return (signed * probs).sum() / denominator
+    return (signed * probs * valid).sum() / denominator
 
 
 class SegmentationLoss(nn.Module):

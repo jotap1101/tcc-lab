@@ -157,6 +157,21 @@ def test_patch_dataset_getitem_shapes(tmp_path) -> None:
     assert set(torch.unique(mask).tolist()) <= {0.0, 1.0}
 
 
+def test_patch_dataset_marks_invalid_pixels_with_ignore_label(tmp_path) -> None:
+    """Pixels sem observação válida devem receber rótulo -1 (ignorado na perda)."""
+    paths, manifest, stats = _manifest_with_patches(tmp_path)
+    image_path = tmp_path / str(manifest.loc[0, "image_path"])
+    image = np.full((4, 8, 8), 100.0, dtype=np.float32)
+    image[:, 0, :] = np.nan
+    _write_patch(image_path, image)
+
+    dataset = PatchDataset(manifest, paths, stats)
+    image_tensor, mask = dataset[0]
+    assert torch.isfinite(image_tensor).all()
+    assert (mask[0, 0, :] == -1.0).all()
+    assert (mask[0, 1:, :] >= 0.0).all()
+
+
 def test_build_loaders_returns_train_and_val(tmp_path) -> None:
     """build_loaders deve dividir treino/validação pela dobra e embaralhar o treino."""
     paths, manifest, _ = _manifest_with_patches(tmp_path)

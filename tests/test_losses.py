@@ -80,6 +80,27 @@ def test_boundary_loss_returns_scalar_with_gradient() -> None:
     assert logits.grad.shape == logits.shape
 
 
+def test_losses_ignore_pixels_with_ignore_label() -> None:
+    """Logits em pixels com rótulo -1 não devem afetar nenhum componente da perda."""
+    targets = torch.tensor([[[[0.0, 1.0], [0.0, -1.0]]]])
+    baseline = torch.zeros_like(targets)
+    changed = baseline.clone()
+    changed[0, 0, 1, 1] = 100.0  # pixel inválido com logit extremo
+
+    assert torch.allclose(dice_loss(baseline, targets), dice_loss(changed, targets))
+    assert torch.allclose(focal_loss(baseline, targets), focal_loss(changed, targets))
+    assert torch.allclose(boundary_loss(baseline, targets), boundary_loss(changed, targets))
+
+
+def test_losses_with_only_invalid_pixels_are_finite() -> None:
+    """Cena integralmente inválida deve produzir perdas finitas e nulas na fronteira."""
+    targets = torch.full((1, 1, 4, 4), -1.0)
+    logits = torch.randn(1, 1, 4, 4)
+    assert float(dice_loss(logits, targets)) == 0.0
+    assert float(focal_loss(logits, targets)) == 0.0
+    assert float(boundary_loss(logits, targets)) == 0.0
+
+
 def test_segmentation_loss_returns_weighted_components() -> None:
     """A perda combinada deve retornar total e componentes com os pesos do config."""
     config = {"loss": {"dice_weight": 1.0, "focal_weight": 2.0, "boundary_weight": 0.0}}

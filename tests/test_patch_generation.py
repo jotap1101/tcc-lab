@@ -190,6 +190,24 @@ def test_generate_patches_creates_manifest_and_patches(tmp_path, monkeypatch) ->
     assert (image_dir / f"{frame.loc[0, 'patch_id']}.npy").is_file()
 
 
+def test_generate_patches_discards_patches_without_valid_pixels(tmp_path, monkeypatch) -> None:
+    """Patches com fração de pixels válidos abaixo do mínimo devem ser descartados."""
+    import pandas as pd
+    from rasterio.transform import from_origin
+
+    paths, composite_file, _ = _write_inputs(tmp_path, monkeypatch)
+    composite = np.zeros((4, 4, 4), dtype=np.float32)
+    composite[:, 2:, :] = np.nan  # metade inferior (fora do AOI) sem observação
+    _write_geotiff(composite_file, composite, from_origin(0, 4, 10, 10))
+    _patch_config(monkeypatch, min_valid_fraction=0.5)
+
+    manifest = generate_patches(paths, TEST_SOURCE)
+    frame = pd.read_parquet(manifest)
+    assert len(frame) == 2
+    assert set(frame["row"].tolist()) == {0}
+    assert (frame["valid_fraction"] == 1.0).all()
+
+
 def test_generate_patches_filters_by_coffee_ratio(tmp_path, monkeypatch) -> None:
     """Patches abaixo da proporção mínima de café devem ser descartados."""
     import pandas as pd

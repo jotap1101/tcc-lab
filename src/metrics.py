@@ -3,9 +3,9 @@
 Calculadas sobre a classe de interesse (café) a partir de contagens de confusão
 (TP/FP/FN) acumuladas por lote. ``SegmentationMetrics`` acumula as contagens ao
 longo de uma época e deriva as quatro métricas no final, evitando média de
-métricas por lote (que distorce quando a classe é rara). Classes vazias (sem
-positivos previstos e sem positivos reais) são consideradas perfeitas, evitando
-divisão por zero.
+métricas por lote (que distorce quando a classe é rara). Pixels com rótulo -1
+(fora do AOI) são ignorados. Classes vazias (sem positivos previstos e sem
+positivos reais) são consideradas perfeitas, evitando divisão por zero.
 """
 
 from __future__ import annotations
@@ -61,9 +61,13 @@ class SegmentationMetrics:
         self.fn = 0
 
     def update(self, logits: torch.Tensor, targets: torch.Tensor) -> None:
-        """Acumula as contagens de confusão de um lote (threshold de 0.5)."""
-        preds = torch.sigmoid(logits) >= 0.5
-        batch_tp, batch_fp, batch_fn = confusion_counts(preds, targets.bool())
+        """Acumula as contagens de confusão de um lote (threshold de 0.5).
+
+        Pixels com rótulo -1 (fora do AOI) são ignorados em TP/FP/FN.
+        """
+        valid = targets >= 0
+        preds = (torch.sigmoid(logits) >= 0.5) & valid
+        batch_tp, batch_fp, batch_fn = confusion_counts(preds, (targets > 0.5) & valid)
         self.tp += batch_tp
         self.fp += batch_fp
         self.fn += batch_fn

@@ -65,6 +65,16 @@ def test_segmentation_metrics_accumulation() -> None:
     assert accumulator.fn == 1
 
 
+def test_segmentation_metrics_ignores_invalid_pixels() -> None:
+    """Pixels com rótulo -1 não devem entrar em TP/FP/FN."""
+    accumulator = SegmentationMetrics()
+    accumulator.update(
+        torch.tensor([[[[1.0, 1.0]]]]),
+        torch.tensor([[[[1.0, -1.0]]]]),
+    )
+    assert (accumulator.tp, accumulator.fp, accumulator.fn) == (1, 0, 0)
+
+
 def test_segmentation_metrics_compute_returns_all_metrics() -> None:
     """compute deve devolver IoU, F1, Precisão e Recall."""
     accumulator = SegmentationMetrics()
