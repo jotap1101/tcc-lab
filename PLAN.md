@@ -103,7 +103,7 @@ Cada notebook é um estágio isolado com uma única responsabilidade e entradas/
 | `07_spatial_kfold_split.ipynb`             | 3. Dataset           | manifesto por fonte → manifesto com `fold` por fonte |
 | `08_dataset_eda.ipynb`                     | 3. Dataset           | manifesto por fonte → estatísticas de normalização + verificações de sanidade por fonte |
 | `09_train_unet.ipynb`                      | 4. Treinamento       | dataset filtrado da fonte escolhida → pesos do U-Net + métricas/histórico por dobra (retreino por fingerprint) |
-| `10_train_segformer.ipynb`                 | 4. Treinamento       | dataset → pesos do SegFormer + métricas por dobra                                                       |
+| `10_train_segformer.ipynb`                 | 4. Treinamento       | dataset filtrado da fonte escolhida → pesos do SegFormer + métricas/histórico por dobra (protocolo único, retreino por fingerprint) |
 | `11_evaluation.ipynb`                      | 5. Avaliação         | predições → IoU/F1/P/R em nível de pixel                                                                |
 | `12_comparative_analysis.ipynb`            | 5. Avaliação         | métricas → comparação estatística + mapas de erro                                                       |
 | `13_xai_gradcam_unet.ipynb`                | 6. XAI               | U-Net → mapas de calor Grad-CAM                                                                         |
@@ -148,7 +148,7 @@ Cada notebook é um estágio isolado com uma única responsabilidade e entradas/
 ### Fase 4 — Treinamento
 
 - [x] `09_train_unet.ipynb` — treino do U-Net na fonte escolhida com o protocolo único (`src/trainer.train_fold`): perda multivariada, Adam + cosine annealing, dobras 0..4, pesos `models/unet/<fonte>/fold_i.pt`, métricas e histórico por dobra + metadata de execução. Métricas guardam `manifest_fingerprint_hash`/`config_hash`; dobras com artefatos desatualizados são retreinadas automaticamente. O primeiro treino (dataset sem filtro) está preservado em `emater_v1`/`archive_v1`.
-- [ ] `10_train_segformer.ipynb`
+- [x] `10_train_segformer.ipynb` — treino do SegFormer (`model.segformer_variant`, padrão `nvidia/mit-b1`) na fonte escolhida com o mesmo `src/trainer.train_fold` do estágio 09: mesmas dobras, perda, otimizador, scheduler, sementes e métricas. A primeira projeção é adaptada de 3 para 4 bandas (pesos RGB preservados; quarto canal = média dos três), a cabeça de segmentação é inicializada do zero (checkpoint de backbone ImageNet) e os logits de 1/4 de resolução são reamostrados bilinearmente para a entrada. Pesos em `models/segformer/<fonte>/fold_i.pt`, métricas/histórico e `run.meta.json` sob `artifacts/{metrics,runs}/segformer/<fonte>/`.
 
 ### Fase 5 — Avaliação
 
@@ -181,7 +181,7 @@ Cada notebook é um estágio isolado com uma única responsabilidade e entradas/
 - [x] `metrics.py` (IoU, F1, Precision, Recall com acumulador por época; ignora pixels com rótulo `-1`)
 - [x] `trainer.py` (protocolo de treino único, parametrizado pelo modelo — sem duplicação entre notebooks 09/10)
 - [x] `models/unet.py`
-- [ ] `models/segformer.py`
+- [x] `models/segformer.py` (SegFormer binário com adaptação 3→4 bandas e logits na resolução da entrada)
 - [ ] `xai/gradcam.py`, `xai/attention_rollout.py`
 - [x] `io.py` (detecção de plataforma + montagem do Drive + garantia/resolução da raiz `tcc/` + entrega do `src/` via espelho), `bootstrap.py` (entrega do `src/` ao runtime antes do import + gravação de `src/.tcc_commit`), `setup.py` (prólogo de runtime + `install_runtime_requirements` com reinício automático em divergência de ABI), `utils.py`
 - [x] `tests/` (config, io, bootstrap, setup, utils, data/*, losses, metrics, trainer e modelos — pytest)
@@ -210,8 +210,10 @@ Cada notebook é um estágio isolado com uma única responsabilidade e entradas/
 - **Reuso de artefatos:** por fingerprint do manifesto + fingerprint do split + hash da configuração; dobras desatualizadas são retreinadas automaticamente.
 - **Correção de bbox/split:** o cálculo de `bbox` usava offset em pixels (em vez de `row/col * patch_size`), fazendo as bboxes se sobreporem e o split não ser espacialmente válido. Corrigido em `BBOX_SCHEMA_VERSION=1`/`SPLIT_SCHEMA_VERSION=2`; manifestos antigos são regenerados sem reenviar os patches.
 - **Baseline:** o primeiro treino do U-Net (dataset sem filtro e antes da correção de bbox/split) foi preservado como `emater_v1`; os metadados do dataset antigo estão em `data/processed/archive_v1/`, as figuras em `artifacts/figures/archive_v1/` e o `BASELINE.json` registra a limitação.
+- **SegFormer (estágio 10):** `nvidia/mit-b1` via Hugging Face Transformers, com o mesmo `src/trainer.py` do U-Net; a primeira projeção é expandida de 3 para 4 bandas preservando os pesos RGB e inicializando o quarto canal com a média dos três, a cabeça de segmentação é inicializada do zero (o checkpoint é de backbone ImageNet) e os logits em 1/4 de resolução são reamostrados bilinearmente para a entrada.
+- **Determinismo do SegFormer:** o upsampling bilinear não tem backward determinístico no CUDA no PyTorch; o estágio 10 usa `torch.use_deterministic_algorithms(True, warn_only=True)`, mantendo seeds/cuDNN e registrando a configuração efetiva em `run.meta.json` (`deterministic_algorithms.warn_only = true`).
 - **Dependências:** instalação centralizada em `src.setup.install_runtime_requirements()`, com reinício automático do kernel em divergência de ABI.
-- **Rastreabilidade:** `commit_sha` vem do git local ou de `src/.tcc_commit`, gravado pelo bootstrap; `run.meta.json` registra config hash, fingerprint do manifesto e ambiente.
+- **Rastreabilidade:** `commit_sha` vem do git local ou de `src/.tcc_commit`, gravado pelo bootstrap; `run.meta.json` registra config hash, fingerprint do manifesto, configuração do modelo (`model_config`) e estado do determinismo, além do ambiente.
 
 ### Riscos em aberto
 

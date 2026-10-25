@@ -3,6 +3,7 @@
 import os
 
 import pytest
+import torch
 
 from src.config import get_config
 from src.utils import (
@@ -27,6 +28,13 @@ def test_set_deterministic_flags_sets_cublas_workspace(monkeypatch) -> None:
     monkeypatch.delenv("CUBLAS_WORKSPACE_CONFIG", raising=False)
     set_deterministic_flags()
     assert os.environ["CUBLAS_WORKSPACE_CONFIG"] in {":4096:8", ":16:8"}
+
+
+def test_set_deterministic_flags_warn_only() -> None:
+    """warn_only deve manter a checagem ativa sem levantar erro (SegFormer)."""
+    set_deterministic_flags(warn_only=True)
+    assert torch.is_deterministic_algorithms_warn_only_enabled()
+    set_deterministic_flags()
 
 
 def test_setup_reproducibility_prints_seed(capsys) -> None:

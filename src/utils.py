@@ -68,20 +68,25 @@ def set_all_seeds(seed: int) -> None:
     torch.cuda.manual_seed_all(seed)
 
 
-def set_deterministic_flags() -> None:
-    """Habilita flags determinísticas do PyTorch (quando suportadas)."""
+def set_deterministic_flags(*, warn_only: bool = False) -> None:
+    """Habilita flags determinísticas do PyTorch (quando suportadas).
+
+    ``warn_only=True`` mantém a checagem de determinismo ativa, mas troca o erro
+    por aviso em operações sem implementação determinística no CUDA — caso do
+    upsampling bilinear usado pelo SegFormer no estágio 10.
+    """
     # Exigido pelo PyTorch para operações cuBLAS determinísticas no CUDA.
     os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
-    torch.use_deterministic_algorithms(True)
+    torch.use_deterministic_algorithms(True, warn_only=warn_only)
 
 
-def setup_reproducibility(config: dict[str, Any]) -> None:
+def setup_reproducibility(config: dict[str, Any], *, warn_only: bool = False) -> None:
     """Fixa sementes e flags determinísticas a partir da configuração."""
     seed = int(config["reproducibility"]["seed"])
     set_all_seeds(seed)
-    set_deterministic_flags()
+    set_deterministic_flags(warn_only=warn_only)
     print(f"Seed fixada: {seed}")
 
 

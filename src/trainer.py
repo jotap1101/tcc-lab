@@ -376,6 +376,11 @@ def run_metadata(
         "lr": float(training["lr"]),
         "weight_decay": float(training["weight_decay"]),
         "num_workers": int(training["num_workers"]),
+        "model_config": dict(config["model"]),
+        "deterministic_algorithms": {
+            "enabled": bool(torch.are_deterministic_algorithms_enabled()),
+            "warn_only": bool(torch.is_deterministic_algorithms_warn_only_enabled()),
+        },
         "manifest_fingerprint_hash": patch_fingerprint_hash(storage_paths, source_name),
         "split_fingerprint_hash": split_fingerprint_hash(storage_paths, source_name),
         "environment": _package_versions(),

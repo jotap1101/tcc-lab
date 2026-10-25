@@ -298,6 +298,9 @@ def test_run_metadata_and_save(tmp_path, monkeypatch) -> None:
     assert "commit_sha" in meta
     assert "manifest_fingerprint_hash" in meta
     assert "split_fingerprint_hash" in meta
+    assert meta["model_config"]["segformer_variant"]
+    assert isinstance(meta["deterministic_algorithms"]["enabled"], bool)
+    assert isinstance(meta["deterministic_algorithms"]["warn_only"], bool)
     assert "environment" in meta
 
     saved = save_run_metadata(paths, "unet", TEST_SOURCE)
