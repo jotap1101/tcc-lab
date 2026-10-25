@@ -30,13 +30,14 @@ You are a strict compliance reviewer for this research repository. You enforce t
 - Notebooks must be isolated per stage, run in numeric order, and resolve every input path from `src/config.py` — no hardcoded paths.
 - Reusable logic must live in `src/` (pure Python), not duplicated inside notebooks.
 - Notebooks must not be mixed with `src/`/`tests/` linting, typing, or unit-test targets.
-- Notebooks must be platform-agnostic: they run correctly on Colab and Kaggle with the same protocol, use `sync_repo_to_workspace()` for `src/` delivery, and access Drive only through `mount_drive()`/`ensure_storage_root()`/`resolve_storage_paths()`.
+- Notebooks must be platform-agnostic: they run correctly on Colab and Kaggle with the same protocol, get `src/` from the first-cell bootstrap (and the `MyDrive/tcc/repo/` mirror when present), and access Drive only through `mount_drive()`/`ensure_storage_root()`/`resolve_storage_paths()`.
 - Code cells must be committed with cleared outputs (no saved cell outputs/platform paths).
 
 ### Scientific configuration
 
 - Configuration comes only from `src/config.yaml` (loaded by `config.py`).
 - All data and artifacts are stored under the Drive `tcc/` root (`MyDrive/tcc/`), created/accessed by the notebooks on demand; ground-truth sources live in per-source subfolders (`data/{raw,interim}/<source>/`).
+- Dataset stages respect `data.min_valid_fraction`; invalid pixels use the ignore label `-1` and are excluded from loss/metrics. Derived artifacts are reused only with matching fingerprint/config hash and archived as `*_v1` when a baseline must be preserved.
 - Credentials are read from environment variables only; authentication steps (e.g., GEE via `ee.Authenticate()`) are executed inside the notebook's own code cells.
 
 ## Workflow

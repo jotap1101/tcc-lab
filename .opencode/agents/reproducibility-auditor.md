@@ -1,5 +1,5 @@
 ---
-description: "Audits the computational reproducibility of the project: fixed seeds (python/numpy/torch/cuda), src/config.yaml as single source of truth, manifest.parquet versioning, committed uv.lock, and per-run environment logging. Use when checking a run, setup, or artifact set for reproducibility."
+description: "Audits the computational reproducibility of the project: fixed seeds (python/numpy/torch/cuda), src/config.yaml as single source of truth, manifest_<fonte>.parquet versioning, committed uv.lock, and per-run environment logging. Use when checking a run, setup, or artifact set for reproducibility."
 mode: subagent
 temperature: 0.1
 color: "#06d6a0"
@@ -31,19 +31,20 @@ You are a computational reproducibility auditor for this research project. Your 
 
 - `uv.lock` committed and in sync with `pyproject.toml` (`uv lock --check`).
 - Environment reproducible: Python version and key library versions (torch, transformers, etc.) recorded.
-- Runtime library versions pinned at notebook execution (Colab/Kaggle default environments differ); notebook `00` installs pinned versions and every run logs them.
+- Runtime library versions pinned at notebook execution (Colab/Kaggle default environments differ); each notebook's dependencies cell calls `src.setup.install_runtime_requirements()` (auto kernel restart on ABI mismatch) and every run logs them.
 
 ### Data and artifact versioning
 
-- `manifest.parquet` present and registering every dataset version used.
+- `manifest_<fonte>.parquet` present and registering every dataset version used, including `valid_fraction`; patches below `data.min_valid_fraction` are discarded and remaining invalid pixels use the ignore label `-1`.
 - Heavy artifacts (`data/`, `models/`, `artifacts/`) kept out of git but referenced consistently by manifest or config.
-- Storage idempotent: re-runs never silently overwrite versioned artifacts (`run_id`-versioned outputs).
+- Storage idempotent: derived artifacts are reused only with matching input fingerprint/config hash and regenerated in place otherwise; historical baselines are archived as `*_v1` (e.g., `emater_v1`, `archive_v1`).
+- Per-fold metrics store `manifest_fingerprint_hash` and `config_hash`; stale artifacts trigger automatic retraining.
 - Notebooks committed with cleared outputs (no saved cell outputs/platform paths).
 - Inputs/outputs of each stage resolvable to unique identifiers (patch ids, model checkpoint paths, metrics files).
 
 ### Environment logging
 
-- Every run logs the full environment: versions, seeds, config hash, commit SHA, and any dataset manifest hash.
+- Every run logs the full environment: versions, seeds, config hash, commit SHA (git or `src/.tcc_commit`), and any dataset manifest fingerprint.
 - Secrets (GEE OAuth token, Hugging Face token, Kaggle secrets) never appear in logs, config, or code — environment variables only.
 
 ## Workflow

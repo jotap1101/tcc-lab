@@ -19,7 +19,7 @@ Emater-MG / Codemig / Seapa / Epamig / FJP).
 
 - 9 arquivos `GetGlebasGeoJson - <Município>.json` (FeatureCollection, CRS
   EPSG:4326), um por município da RGI de Guaxupé (310044).
-- 34.985 polígonos no total (~604 km² de café, ~21% do AOI).
+- 34.985 polígonos no total (~603 km² de café, ≈10% do AOI — fração registrada em `artifacts/metrics/ground_truth/source_decision_310044.json`).
 - Propriedades: `area` (hectares, consistente com a área geométrica),
   `altitude` (m), `variedade` (100% "Café" — camada já binária);
   `anoplantio`/`espacamento` vazios.

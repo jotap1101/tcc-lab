@@ -18,7 +18,7 @@ O estudo tem como alvo a Região Geográfica Imediata de Guaxupé – MG, Brasil
 ## Visão Geral
 
 - **Tarefa:** segmentação semântica binária (café vs. não-café).
-- **Modelos:** U-Net (CNN) e SegFormer (ViT, MiT-b0–b2).
+- **Modelos:** U-Net (CNN) e SegFormer (ViT, MiT-b1 — configurável para b0–b2).
 - **Dados:** Sentinel-2 Nível-2A, bandas B2/B3/B4/B8 com resolução espacial de 10 m.
 - **Função de perda:** combinação de Dice + Focal + Boundary Loss.
 - **Validação:** k-fold espacial (k=5) com métricas em nível de pixel: IoU, F1-Score, Precisão e Revocação.
@@ -29,8 +29,8 @@ O estudo tem como alvo a Região Geográfica Imediata de Guaxupé – MG, Brasil
 O pipeline abrange aquisição, pré-processamento, treinamento, avaliação e explicabilidade:
 
 1. Aquisição no Google Earth Engine de mosaicos Sentinel-2 e máscaras de referência por fonte (MapBiomas 2025 / AlphaEarth 2024 / Emater 2018 — cada fonte usa o ano mais recente com dados disponíveis).
-2. Mascaramento de nuvens (QA60), normalização e recorte em patches de 512×512 pixels.
-3. Particionamento em k-fold espacial para evitar vazamento por autocorrelação espacial.
+2. Mascaramento de nuvens (QA60), normalização e recorte em patches de 512×512 pixels, descartando patches com menos de `data.min_valid_fraction` de pixels válidos (área fora do AOI).
+3. Particionamento em k-fold espacial para evitar vazamento por autocorrelação espacial; pixels inválidos remanescentes recebem o rótulo `-1` e são ignorados pela perda e pelas métricas.
 4. Protocolo de treinamento idêntico para ambas as arquiteturas — apenas o modelo difere.
 5. Avaliação de métricas em nível de pixel e geração de mapas de calor de XAI.
 
@@ -43,7 +43,7 @@ tcc/
 ├── AGENTS.md              # fonte de verdade para regras de código e formatação
 ├── PLAN.md                # roteiro de implementação
 ├── pyproject.toml         # uv, ruff, mypy, pytest
-├── requirements-runtime.txt  # versões pinadas instaladas pelo notebook 00
+├── requirements-runtime.txt  # versões pinadas instaladas pela célula de dependências de cada notebook
 ├── src/                   # pacote Python compartilhado (config, io, bootstrap, data, losses, trainer, models, ...)
 ├── tests/                 # pytest apenas sobre src/
 ├── notebooks/             # estágios .ipynb sequenciais
@@ -62,8 +62,9 @@ O **armazenamento canônico** de dados e artefatos não fica no repositório: tu
 MyDrive/tcc/                       # raiz de armazenamento (criada/acessada pelos notebooks)
 ├── data/{raw,interim,processed,external}/
 │   └── interim/{mapbiomas,alphaearth,emater,...}/   # ground truth por fonte (ano próprio)
-├── models/{unet,segformer}/
-├── artifacts/{metrics,figures,runs}/
+├── models/{unet,segformer}/{fonte}/          # + baselines históricos, ex.: emater_v1/
+├── artifacts/metrics|runs/{modelo}/{fonte}/  # + baselines, ex.: emater_v1/
+├── artifacts/figures/                        # + baselines, ex.: archive_v1/
 ├── repo/src/                      # espelho do código-fonte (entrega do src/ ao runtime)
 ├── secrets/                       # tokens OAuth persistidos — nunca versionar
 └── ...                            # qualquer subpasta necessária ao pipeline
@@ -81,17 +82,17 @@ MyDrive/tcc/                       # raiz de armazenamento (criada/acessada pelo
 
 O projeto segue um layout híbrido: os notebooks Jupyter orquestram cada estágio, enquanto a lógica reutilizável reside no pacote `src/`. Os notebooks devem ser executados em ordem numérica e resolver todos os caminhos de entrada a partir de `src/config.py`.
 
-Os notebooks são **agnósticos de plataforma**: o mesmo `.ipynb` executa no Google Colab ou no Kaggle e roda perfeitamente nas duas (mesmo protocolo: código, sementes, versões e processamento — não necessariamente saída bit-a-bit entre hardwares diferentes). A primeira célula de **cada** notebook baixa e executa `src/bootstrap.py` (somente stdlib) do repositório público: o bootstrap extrai `src/`, `data/external/` e `requirements-runtime.txt` para o workspace, adiciona-o ao `sys.path` e, no Colab, cria o espelho `MyDrive/tcc/repo/`; quando o espelho já existe, `src/io.py` (`sync_repo_to_workspace()`) o copia para o workspace — os notebooks geram a estrutura dentro de `tcc/`. Todo dado, arquivo, modelo, métrica, figura e log gerado é armazenado dentro da pasta **`tcc/` na raiz do Google Drive** (`MyDrive/tcc/`); os notebooks acessam essa pasta se já existir ou a criam — assim como todas as subpastas de que precisam — sem assumir estrutura preexistente. Detecção de ambiente, montagem do Drive e resolução de caminhos ficam centralizados em `src/` (ex.: `io.py`); no Colab o Drive é montado nativamente e no Kaggle é acessado via Drive API (token OAuth + cache local) — sempre pela mesma chamada única. Cada fonte de ground truth (MapBiomas, AlphaEarth, Emater, ...) tem sua própria célula de código, subpasta (`data/interim/<fonte>/`) e **conjunto próprio de patches e manifesto** (`manifest_<fonte>.parquet`). O sistema não elege fonte alguma: o estágio 03 compara todas as fontes e o estágio 04 registra a **decisão manual** do pesquisador (`ground_truth.chosen_source`), que seleciona apenas qual conjunto de patches será usado no treinamento.
+Os notebooks são **agnósticos de plataforma**: o mesmo `.ipynb` executa no Google Colab ou no Kaggle e roda perfeitamente nas duas (mesmo protocolo: código, sementes, versões e processamento — não necessariamente saída bit-a-bit entre hardwares diferentes). A primeira célula de **cada** notebook baixa e executa `src/bootstrap.py` (somente stdlib) do repositório público: o bootstrap extrai `src/`, `data/external/` e `requirements-runtime.txt` para o workspace, adiciona-o ao `sys.path`, grava o SHA do commit em `src/.tcc_commit` e, no Colab, cria o espelho `MyDrive/tcc/repo/`; quando o espelho já existe, `src/io.py` (`sync_repo_to_workspace()`) o copia para o workspace — os notebooks geram a estrutura dentro de `tcc/`. Todo dado, arquivo, modelo, métrica, figura e log gerado é armazenado dentro da pasta **`tcc/` na raiz do Google Drive** (`MyDrive/tcc/`); os notebooks acessam essa pasta se já existir ou a criam — assim como todas as subpastas de que precisam — sem assumir estrutura preexistente. Detecção de ambiente, montagem do Drive e resolução de caminhos ficam centralizados em `src/` (ex.: `io.py`); no Colab o Drive é montado nativamente e no Kaggle é acessado via Drive API (token OAuth + cache local) — sempre pela mesma chamada única. Cada fonte de ground truth (MapBiomas, AlphaEarth, Emater, ...) tem sua própria célula de código, subpasta (`data/interim/<fonte>/`) e **conjunto próprio de patches e manifesto** (`manifest_<fonte>.parquet`). O sistema não elege fonte alguma: o estágio 03 compara todas as fontes e o estágio 04 registra a **decisão manual** do pesquisador (`ground_truth.chosen_source`), que seleciona apenas qual conjunto de patches será usado no treinamento.
 
 O treinamento e o armazenamento de artefatos ocorrem no Google Drive (a partir do Colab ou do Kaggle); linting, verificação de tipos e testes são validados localmente pelo `.venv` e novamente no CI (GitHub Actions). Consulte o `AGENTS.md` para as regras operacionais completas.
 
 **Autenticação dentro dos notebooks:** todo processo de autenticação (GEE, Hugging Face, etc.) é executado nas próprias células de código dos notebooks, usando as bibliotecas/frameworks necessários (ex.: autenticação OAuth no GEE com `ee.Authenticate()`, usando a conta principal). As credenciais são lidas apenas de variáveis de ambiente — nunca commitadas, logadas ou expostas. Não há etapa de autenticação externa ou manual fora dos notebooks.
 
-Para garantir o mesmo protocolo de execução nas duas plataformas, o notebook `00` instala versões fixadas das bibliotecas (`requirements-runtime.txt`, já que os ambientes padrão do Colab e do Kaggle diferem) e cada execução registra o ambiente completo (versões, sementes, hash de config/commit/manifest), com flags determinísticas do PyTorch habilitadas (`cudnn.deterministic`, `use_deterministic_algorithms`). Os notebooks são versionados com outputs limpos e as convenções estruturais (nomenclatura, markdown sobre cada célula de código, outputs vazios) são validadas no CI. As operações de armazenamento são idempotentes: reexecuções criam/abrem a árvore `tcc/` com segurança e nunca sobrescrevem silenciosamente artefatos versionados.
+Para garantir o mesmo protocolo de execução nas duas plataformas, a célula de dependências de cada notebook instala as versões fixadas de `requirements-runtime.txt` via `src.setup.install_runtime_requirements()` — que reinicia o kernel automaticamente quando uma extensão compilada já carregada diverge da versão pinada — e cada execução registra o ambiente completo (versões, sementes, hash de config/commit/manifest), com flags determinísticas do PyTorch habilitadas (`cudnn.deterministic`, `use_deterministic_algorithms`). O `commit_sha` vem do git local ou de `src/.tcc_commit`, gravado pelo bootstrap. Os notebooks são versionados com outputs limpos e as convenções estruturais (nomenclatura, markdown sobre cada célula de código, outputs vazios) são validadas no CI. As operações de armazenamento são idempotentes: artefatos derivados são reutilizados apenas enquanto o fingerprint do dataset e o hash da configuração coincidem; quando mudam, são regenerados no lugar. Baselines históricos são preservados com sufixo `_v1` (ex.: `models/unet/emater_v1`, `data/processed/archive_v1`, `artifacts/figures/archive_v1`).
 
 ## Status
 
-Estágios `00`–`09` implementados e versionados: aquisição Sentinel-2 (GEE, mosaicos por ano da fonte), máscaras de referência por fonte (MapBiomas 2025 / AlphaEarth 2024 / Emater 2018), comparação entre fontes e registro da decisão manual (`04`), pré-processamento (composite por ano), geração de patches por fonte + manifesto, divisão espacial k-fold (k=5) por fonte, EDA e treino do **U-Net** na fonte escolhida com o protocolo único (`src/trainer.py`). O pacote `src/` cobre `config`, `io`/`bootstrap`/`setup`, `data/*`, `losses`, `metrics`, `trainer` e `models/unet`, com `tests/` e CI (ruff, mypy, pytest e convenções de notebook). Pendentes: SegFormer (`10`), avaliação (`11`/`12`), XAI (`13`/`14`) e síntese/disseminação (`15`/`16`) — consulte o `PLAN.md`.
+Estágios `00`–`09` implementados e versionados: aquisição Sentinel-2 (GEE, mosaicos por ano da fonte), máscaras de referência por fonte (MapBiomas 2025 / AlphaEarth 2024 / Emater 2018), comparação entre fontes e registro da decisão manual (`04`), pré-processamento (composite por ano), geração de patches por fonte + manifesto com filtro de pixels válidos, divisão espacial k-fold (k=5) por fonte, EDA e treino do **U-Net** na fonte escolhida (Emater 2018) com o protocolo único (`src/trainer.py`), ignorando pixels fora do AOI (rótulo `-1`) na perda e nas métricas. O pacote `src/` cobre `config`, `io`/`bootstrap`/`setup`, `data/*`, `losses`, `metrics`, `trainer` e `models/unet`, com `tests/` e CI (ruff, mypy, pytest e convenções de notebook). O primeiro treino do U-Net (dataset sem filtro) está preservado como `emater_v1`, com metadados do dataset em `data/processed/archive_v1/` e figuras em `artifacts/figures/archive_v1/`. Pendentes: SegFormer (`10`), avaliação (`11`/`12`), XAI (`13`/`14`) e síntese/disseminação (`15`/`16`) — consulte o `PLAN.md`.
 
 ## Contribuição
 

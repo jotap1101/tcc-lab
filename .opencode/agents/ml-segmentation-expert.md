@@ -33,6 +33,7 @@ You are a deep learning / computer vision specialist focused on semantic segment
 
 - Sentinel-2 Level-2A, bands B2/B3/B4/B8 at 10 m, split into 512x512 patches.
 - Normalization, augmentation, and handling of cloud/shadow artifacts.
+- Out-of-AOI invalid pixels: patches below `data.min_valid_fraction` are discarded and remaining invalid pixels use the ignore label `-1`, excluded from loss and metrics.
 
 ## What you do
 

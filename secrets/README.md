@@ -32,7 +32,7 @@ configurar Secrets em cada notebook novo.
    (**Input → Add Input** ou `dataset_sources` no `kernel-metadata.json`).
    Alternativa: Secrets do Kaggle (Settings → Secrets) com `GDRIVE_TOKEN` e
    `GEE_CREDENTIALS`.
-4. O notebook `00` lê os segredos via `src.utils.get_secret`; em Colab, com
+4. Os notebooks leem os segredos via `src.utils.get_secret`; em Colab, com
    fallback para arquivos em `MyDrive/tcc/secrets/` (ex.: `drive_token.json`,
    `earthengine_credentials.json`).
 

@@ -1,5 +1,6 @@
-# Versões pinadas (mais recentes no PyPI em set/2026) instaladas pelo notebook 00
-# em TODAS as plataformas (Colab e Kaggle). Suportam Python 3.10+.
+# Versões pinadas (mais recentes no PyPI em set/2026) instaladas pela célula de
+# dependências de cada notebook em TODAS as plataformas (Colab e Kaggle).
+# Suportam Python 3.10+.
 torch==2.14.0
 torchvision==0.29.0
 transformers==5.17.0
