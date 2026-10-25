@@ -73,6 +73,7 @@ Research project (deep learning / computer vision) on **semantic segmentation of
 - Single source of truth for configuration: `src/config.yaml` (loaded by `config.py`).
 - Fix all seeds (`python`/`numpy`/`torch`/`cuda`); commit `uv.lock`; log the full environment per run.
 - **Runtime versions pinned for cross-platform consistency**: Colab and Kaggle ship different default environments, so notebook `00` installs the pinned versions in `requirements-runtime.txt` and every run logs the full environment (versions, seeds, config hash, commit SHA, manifest hash).
+- **Safe dependency installation**: each notebook's dependencies cell calls `src.setup.install_runtime_requirements()`, which installs the pins and automatically restarts the kernel when an already-imported compiled extension (e.g., `numpy`, `scipy`, `torch`) diverges from the pinned version (ABI inconsistency); the notebook is then re-executed from the first cell.
 - **Torch determinism enforced**: `torch.backends.cudnn.deterministic = True`, `torch.backends.cudnn.benchmark = False` and `torch.use_deterministic_algorithms(True)` where supported; any residual nondeterminism must be documented.
 - Data is registered in per-source versioned manifests (`manifest_<source>.parquet`); heavy artifacts live outside git, in the Drive `tcc/` root (optionally mirrored in local git-ignored `data/`, `models/`, `artifacts/`).
 
