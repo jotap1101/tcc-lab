@@ -90,13 +90,6 @@ def fold_training_done(
     )
 
 
-def _persist_json(path: Path, payload: dict[str, Any]) -> None:
-    """Persiste um dicionário como JSON no Drive canônico."""
-    from src import io
-
-    io.persist_bytes(path, json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8"))
-
-
 def _persist_weights(path: Path, state_dict: dict[str, torch.Tensor]) -> None:
     """Persiste o state dict do modelo no Drive canônico (via buffer em memória)."""
     from src import io
@@ -178,7 +171,7 @@ def train_fold(
 
     current_fingerprint = patch_fingerprint_hash(storage_paths, source)
     current_split = split_fingerprint_hash(storage_paths, source)
-    current_config_hash = _config_hash()
+    current_config_hash = config_hash()
 
     if not force and fold_training_done(storage_paths, model_name, source, fold):
         saved = json.loads(io.ensure_local_copy(metrics_file).read_text(encoding="utf-8"))
@@ -261,7 +254,7 @@ def train_fold(
         raise RuntimeError(f"[{model_name}] dobra {fold}: treino sem nenhuma época concluída.")
     model.load_state_dict(best_state)
     _persist_weights(weights_file, best_state)
-    _persist_json(
+    io.persist_json(
         metrics_file,
         {
             "model": model_name,
@@ -276,7 +269,7 @@ def train_fold(
             "val": best_val,
         },
     )
-    _persist_json(
+    io.persist_json(
         history_file,
         {"model": model_name, "fold": fold, "seed": fold_seed, "epochs": history},
     )
@@ -300,7 +293,7 @@ def train_fold(
     )
 
 
-def _config_hash() -> str:
+def config_hash() -> str:
     """Hash SHA-256 curto do config.yaml vigente (fingerprint da configuração)."""
     from src.config import CONFIG_PATH
 
@@ -368,7 +361,7 @@ def run_metadata(
         "year": reference_year(source_name),
         "fold_count": fold_count(),
         "platform": io.detect_platform(),
-        "config_hash": _config_hash(),
+        "config_hash": config_hash(),
         "commit_sha": _commit_sha(),
         "seed": int(config["reproducibility"]["seed"]),
         "epochs": int(training["epochs"]),
@@ -402,6 +395,6 @@ def save_run_metadata(storage_paths: dict[str, Path], model_name: str, source_na
         if stored == metadata:
             print(f"Metadata de execução já existente e atual (reutilizado): {path}")
             return path
-    _persist_json(path, metadata)
+    io.persist_json(path, metadata)
     print(f"Metadata de execução salvo em: {path}")
     return path

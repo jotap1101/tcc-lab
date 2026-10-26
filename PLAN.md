@@ -40,6 +40,7 @@ tcc/
 │   ├── data/{augmentations,dataset,eda,gee_client,mask_comparison,mask_utils,patch_generation,preprocessing,raster_utils,source_decision,spatial_split}.py
 │   ├── losses.py
 │   ├── metrics.py
+│   ├── evaluation.py
 │   ├── trainer.py
 │   ├── models/{unet,segformer}.py
 │   └── xai/{gradcam,attention_rollout}.py
@@ -80,7 +81,7 @@ GEE Sentinel-2 L2A (B2/B3/B4/B8) filtrado pelo AOI
   → atribuição espacial k-fold por fonte                [07]
   → EDA / estatísticas de normalização por fonte        [08]
   → treino U-Net / SegFormer (k=5, fonte escolhida)     [09, 10]
-  → métricas por pixel (IoU/F1/Precision/Recall)        [11]
+  → predições + métricas por pixel (IoU/F1/P/R)        [11]
   → comparação estatística                         [12]
   → Grad-CAM + Attention Rollout                   [13, 14]
   → figuras para a monografia                         [15]
@@ -104,7 +105,7 @@ Cada notebook é um estágio isolado com uma única responsabilidade e entradas/
 | `08_dataset_eda.ipynb`                     | 3. Dataset           | manifesto por fonte → estatísticas de normalização + verificações de sanidade por fonte |
 | `09_train_unet.ipynb`                      | 4. Treinamento       | dataset filtrado da fonte escolhida → pesos do U-Net + métricas/histórico por dobra (retreino por fingerprint) |
 | `10_train_segformer.ipynb`                 | 4. Treinamento       | dataset filtrado da fonte escolhida → pesos do SegFormer + métricas/histórico por dobra (protocolo único, retreino por fingerprint) |
-| `11_evaluation.ipynb`                      | 5. Avaliação         | predições → IoU/F1/P/R em nível de pixel                                                                |
+| `11_evaluation.ipynb`                      | 5. Avaliação         | pesos por dobra → predições persistidas + IoU/F1/P/R em nível de pixel (por patch, por dobra e agregado) |
 | `12_comparative_analysis.ipynb`            | 5. Avaliação         | métricas → comparação estatística + mapas de erro                                                       |
 | `13_xai_gradcam_unet.ipynb`                | 6. XAI               | U-Net → mapas de calor Grad-CAM                                                                         |
 | `14_xai_attention_rollout_segformer.ipynb` | 6. XAI               | SegFormer → mapas Attention Rollout                                                                     |
@@ -115,7 +116,7 @@ Cada notebook é um estágio isolado com uma única responsabilidade e entradas/
 
 - **`config.yaml`**: `aoi` (código da região `310044`, `vector_source` `ibge_mesh`, `mesh_path` apontando para `data/external/ibge/mg_rg_immediatas_2025/`), `data` (`collection`, `dates` — fallback para fontes sem `year`, `bands`, `patch_size`, `coffee_min_ratio`, `min_valid_fraction` — fração mínima de pixels válidos por patch, descartando área fora do AOI, `cloud_threshold`, `crs`, `export`), `gee` (`project` — ID do projeto Cloud para `ee.Initialize`), `ground_truth` (`chosen_source` — decisão manual — + bloco `sources` com `year` próprio por fonte, `collection_id`/`collection_filter`, classe/limiar e `enabled`), `splits.fold_count`, `reproducibility.seed`, `model` (`unet_channels`, `segformer_variant`), pesos de `loss`, `augmentation` (aumentações geométricas determinísticas reseedadas por época: `hflip_prob`, `vflip_prob`, `rot90_prob`), `training` (`lr`, `epochs`, `batch_size`, `weight_decay`, `num_workers`). O bloco `storage` mapeia a raiz `tcc/` do Drive e toda subpasta (`data`, `models`, `artifacts`, `repo`, `secrets`, ...) — todos os caminhos são resolvidos daqui, nunca hardcoded.
 - **Colunas do `manifest_<fonte>.parquet`**: `patch_id`, `tile_id`, `fold`, `row`, `col`, `bbox`, `coffee_ratio`, `valid_fraction`, `mask_source`, `image_path`, `mask_path`. `coffee_ratio` é medido apenas sobre os pixels válidos do patch; `valid_fraction` registra a fração dentro do AOI.
-- **Artefatos** (todos sob a raiz `tcc/` do Drive, caminhos resolvidos de `config.yaml`): `MyDrive/tcc/artifacts/metrics/{model}/{fonte}/fold_{i}.json` (com `manifest_fingerprint_hash`, `split_fingerprint_hash` e `config_hash`), `MyDrive/tcc/artifacts/runs/{model}/{fonte}/fold_{i}.json` + `run.meta.json`, `MyDrive/tcc/artifacts/figures/`, `MyDrive/tcc/models/{model}/{fonte}/fold_{i}.pt`, `MyDrive/tcc/data/processed/manifest_<fonte>.parquet` e `MyDrive/tcc/data/processed/normalization_stats_<fonte>.json` (estatísticas de normalização por banda — estágio 08). Baselines históricos ficam em `models/{model}/{fonte}_v1/`, `artifacts/metrics|runs/{model}/{fonte}_v1/`, `data/processed/archive_v1/` e `artifacts/figures/archive_v1/`.
+- **Artefatos** (todos sob a raiz `tcc/` do Drive, caminhos resolvidos de `config.yaml`): `MyDrive/tcc/artifacts/metrics/{model}/{fonte}/fold_{i}.json` (com `manifest_fingerprint_hash`, `split_fingerprint_hash` e `config_hash`), `MyDrive/tcc/artifacts/metrics/{model}/{fonte}/evaluation/{fold_{i}.json,summary.json,patch_metrics_fold_{i}.parquet,predictions_fold_{i}.npz}` (métricas de avaliação por dobra, resumo agregado, métricas por patch e predições binárias — estágio 11), `MyDrive/tcc/artifacts/runs/{model}/{fonte}/fold_{i}.json` + `run.meta.json`, `MyDrive/tcc/artifacts/figures/`, `MyDrive/tcc/models/{model}/{fonte}/fold_{i}.pt`, `MyDrive/tcc/data/processed/manifest_<fonte>.parquet` e `MyDrive/tcc/data/processed/normalization_stats_<fonte>.json` (estatísticas de normalização por banda — estágio 08). Baselines históricos ficam em `models/{model}/{fonte}_v1/`, `artifacts/metrics|runs/{model}/{fonte}_v1/`, `data/processed/archive_v1/` e `artifacts/figures/archive_v1/`.
 
 ## 7. Rastreador de progresso
 
@@ -152,7 +153,7 @@ Cada notebook é um estágio isolado com uma única responsabilidade e entradas/
 
 ### Fase 5 — Avaliação
 
-- [ ] `11_evaluation.ipynb`
+- [x] `11_evaluation.ipynb` — inferência dos pesos por dobra dos estágios 09/10 sobre a validação espacial, com IoU/F1/Precisão/Recall em nível de pixel (por patch, por dobra e agregado micro), ignorando `-1`. Persiste `evaluation/{fold_{i}.json,summary.json,patch_metrics_fold_{i}.parquet,predictions_fold_{i}.npz}` por modelo/fonte e figura de resumo; reutiliza artefatos apenas quando manifesto, split, config e hash dos pesos coincidem.
 - [ ] `12_comparative_analysis.ipynb`
 
 ### Fase 6 — XAI
@@ -179,12 +180,13 @@ Cada notebook é um estágio isolado com uma única responsabilidade e entradas/
 - [x] `data/emater_masks.py` (máscara vetorial da Emater — estágio 02)
 - [x] `losses.py` (Dice + Focal + Boundary, com pesos de config.yaml; ignora pixels com rótulo `-1`)
 - [x] `metrics.py` (IoU, F1, Precision, Recall com acumulador por época; ignora pixels com rótulo `-1`)
+- [x] `evaluation.py` (inferência dos pesos por dobra, métricas por patch/dobra/agregadas, predições persistidas e figura — estágio 11)
 - [x] `trainer.py` (protocolo de treino único, parametrizado pelo modelo — sem duplicação entre notebooks 09/10)
 - [x] `models/unet.py`
 - [x] `models/segformer.py` (SegFormer binário com adaptação 3→4 bandas e logits na resolução da entrada)
 - [ ] `xai/gradcam.py`, `xai/attention_rollout.py`
 - [x] `io.py` (detecção de plataforma + montagem do Drive + garantia/resolução da raiz `tcc/` + entrega do `src/` via espelho), `bootstrap.py` (entrega do `src/` ao runtime antes do import + gravação de `src/.tcc_commit`), `setup.py` (prólogo de runtime + `install_runtime_requirements` com reinício automático em divergência de ABI), `utils.py`
-- [x] `tests/` (config, io, bootstrap, setup, utils, data/*, losses, metrics, trainer e modelos — pytest)
+- [x] `tests/` (config, io, bootstrap, setup, utils, data/*, losses, metrics, evaluation, trainer e modelos — pytest)
 
 ## 8. Checklist de reprodutibilidade
 
@@ -207,12 +209,13 @@ Cada notebook é um estágio isolado com uma única responsabilidade e entradas/
 
 - **Fonte de ground truth:** Emater 2018, escolhida manualmente no estágio `04` (decisão registrada em `ground_truth.chosen_source`).
 - **Filtro de dataset:** `data.min_valid_fraction = 0.10`; patches abaixo desse limiar são descartados e pixels inválidos remanescentes usam o rótulo `-1`, ignorado por perda e métricas.
-- **Reuso de artefatos:** por fingerprint do manifesto + fingerprint do split + hash da configuração; dobras desatualizadas são retreinadas automaticamente.
+- **Reuso de artefatos:** por fingerprint do manifesto + fingerprint do split + hash da configuração; dobras desatualizadas são retreinadas automaticamente. A avaliação (`11`) acrescenta o hash dos pesos da dobra ao fingerprint e reavalia quando qualquer um deles muda.
+- **Avaliação (estágio 11):** inferência dos pesos de cada dobra na validação espacial, limiar fixo de 0,5 (mesmo de `src/metrics.py`), pixels `-1` ignorados. Reporta métricas por patch, por dobra e o agregado *micro* (TP/FP/FN somados), além da média/desvio das métricas por dobra. Predições binárias e métricas por patch ficam persistidas para o estágio 12 (comparação estatística e mapas de erro).
 - **Correção de bbox/split:** o cálculo de `bbox` usava offset em pixels (em vez de `row/col * patch_size`), fazendo as bboxes se sobreporem e o split não ser espacialmente válido. Corrigido em `BBOX_SCHEMA_VERSION=1`/`SPLIT_SCHEMA_VERSION=2`; manifestos antigos são regenerados sem reenviar os patches.
 - **Baseline:** o primeiro treino do U-Net (dataset sem filtro e antes da correção de bbox/split) foi preservado como `emater_v1`; os metadados do dataset antigo estão em `data/processed/archive_v1/`, as figuras em `artifacts/figures/archive_v1/` e o `BASELINE.json` registra a limitação.
 - **SegFormer (estágio 10):** `nvidia/mit-b1` via Hugging Face Transformers, com o mesmo `src/trainer.py` do U-Net; a primeira projeção é expandida de 3 para 4 bandas preservando os pesos RGB e inicializando o quarto canal com a média dos três, a cabeça de segmentação é inicializada do zero (o checkpoint é de backbone ImageNet) e os logits em 1/4 de resolução são reamostrados bilinearmente para a entrada.
-- **Determinismo do SegFormer:** o upsampling bilinear não tem backward determinístico no CUDA no PyTorch; o estágio 10 usa `torch.use_deterministic_algorithms(True, warn_only=True)`, mantendo seeds/cuDNN e registrando a configuração efetiva em `run.meta.json` (`deterministic_algorithms.warn_only = true`).
-- **Dependências:** instalação centralizada em `src.setup.install_runtime_requirements()`, com reinício automático do kernel em divergência de ABI. Notebooks que usam Transformers (`10`) também chamam `src.setup.remove_incompatible_torchaudio()`: o ambiente do Kaggle pode trazer um `torchaudio` compilado para outra versão de CUDA, que impede o import do Transformers; como o projeto não usa áudio, o pacote é removido apenas quando não importa.
+- **Determinismo do SegFormer:** o upsampling bilinear não tem backward determinístico no CUDA no PyTorch; os estágios 10 e 11 usam `torch.use_deterministic_algorithms(True, warn_only=True)`, mantendo seeds/cuDNN e registrando a configuração efetiva do treino em `run.meta.json` (`deterministic_algorithms.warn_only = true`).
+- **Dependências:** instalação centralizada em `src.setup.install_runtime_requirements()`, com reinício automático do kernel em divergência de ABI. Notebooks que usam Transformers (`10`, `11`) também chamam `src.setup.remove_incompatible_torchaudio()`: o ambiente do Kaggle pode trazer um `torchaudio` compilado para outra versão de CUDA, que impede o import do Transformers; como o projeto não usa áudio, o pacote é removido apenas quando não importa.
 - **Rastreabilidade:** `commit_sha` vem do git local ou de `src/.tcc_commit`, gravado pelo bootstrap; `run.meta.json` registra config hash, fingerprint do manifesto, configuração do modelo (`model_config`) e estado do determinismo, além do ambiente.
 
 ### Riscos em aberto

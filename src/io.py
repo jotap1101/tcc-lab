@@ -250,6 +250,11 @@ def persist_bytes(path: Path, data: bytes) -> None:
         get_drive_client().upload(path, str(path.relative_to(mount_drive())))
 
 
+def persist_json(path: Path, payload: Any) -> None:
+    """Serializa um objeto como JSON UTF-8 no caminho canônico do Drive."""
+    persist_bytes(path, json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8"))
+
+
 def persist_file(local_path: Path, target_path: Path) -> None:
     """Persiste um arquivo local em um caminho do Drive canônico.
 
