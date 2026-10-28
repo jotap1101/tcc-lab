@@ -32,7 +32,7 @@ O pipeline abrange aquisição, pré-processamento, treinamento, avaliação e e
 2. Mascaramento de nuvens (QA60), normalização e recorte em patches de 512×512 pixels, descartando patches com menos de `data.min_valid_fraction` de pixels válidos (área fora do AOI).
 3. Particionamento em k-fold espacial para evitar vazamento por autocorrelação espacial; pixels inválidos remanescentes recebem o rótulo `-1` e são ignorados pela perda e pelas métricas.
 4. Protocolo de treinamento idêntico para ambas as arquiteturas (`09`/`10`) — apenas o modelo difere.
-5. Avaliação de métricas em nível de pixel nas dobras espaciais (`11`), com predições e métricas por patch persistidas, seguida da comparação estatística (`12`) e da geração de mapas de calor de XAI (`13`/`14`).
+5. Avaliação de métricas em nível de pixel nas dobras espaciais (`11`), com predições e métricas por patch persistidas, seguida da comparação estatística emparelhada (`12`) — IC bootstrap, teste t, Wilcoxon com correção de Holm, tamanhos de efeito e mapas de erro TP/FP/FN/ignorado — e da geração de mapas de calor de XAI (`13`/`14`).
 
 O `PLAN.md` é o roteiro oficial, com ordenação das fases, entradas/saídas de cada notebook e um rastreador de progresso.
 
@@ -44,7 +44,7 @@ tcc/
 ├── PLAN.md                # roteiro de implementação
 ├── pyproject.toml         # uv, ruff, mypy, pytest
 ├── requirements-runtime.txt  # versões pinadas instaladas pela célula de dependências de cada notebook
-├── src/                   # pacote Python compartilhado (config, io, bootstrap, data, losses, metrics, evaluation, trainer, models, ...)
+├── src/                   # pacote Python compartilhado (config, io, bootstrap, data, losses, metrics, evaluation, comparative, trainer, models, ...)
 ├── tests/                 # pytest apenas sobre src/
 ├── notebooks/             # estágios .ipynb sequenciais
 ├── scripts/               # geradores de tokens OAuth (Drive, GEE) — uso local, para o Kaggle
@@ -65,6 +65,7 @@ MyDrive/tcc/                       # raiz de armazenamento (criada/acessada pelo
 ├── models/{unet,segformer}/{fonte}/          # + baselines históricos, ex.: emater_v1/
 ├── artifacts/metrics|runs/{modelo}/{fonte}/  # + baselines, ex.: emater_v1/
 ├── artifacts/metrics/{modelo}/{fonte}/evaluation/  # métricas, patches e predições do estágio 11
+├── artifacts/metrics/comparative/{fonte}/    # comparação estatística U-Net vs SegFormer do estágio 12
 ├── artifacts/figures/                        # + baselines, ex.: archive_v1/
 ├── repo/src/                      # espelho do código-fonte (entrega do src/ ao runtime)
 ├── secrets/                       # tokens OAuth persistidos — nunca versionar
@@ -93,7 +94,7 @@ Para garantir o mesmo protocolo de execução nas duas plataformas, a célula de
 
 ## Status
 
-Estágios `00`–`11` implementados e versionados: aquisição Sentinel-2 (GEE, mosaicos por ano da fonte), máscaras de referência por fonte (MapBiomas 2025 / AlphaEarth 2024 / Emater 2018), comparação entre fontes e registro da decisão manual (`04`), pré-processamento (composite por ano), geração de patches por fonte + manifesto com filtro de pixels válidos, divisão espacial k-fold (k=5) por fonte, EDA, treino do **U-Net** (`09`) e treino do **SegFormer** (`10`) na fonte escolhida (Emater 2018) com o protocolo único (`src/trainer.py`), ignorando pixels fora do AOI (rótulo `-1`) na perda e nas métricas, e **avaliação por pixel** (`11`) dos dois modelos com IoU/F1/Precisão/Recall por patch, por dobra e agregados, além de predições binárias persistidas para a análise comparativa. O SegFormer usa `nvidia/mit-b1` por padrão: a primeira projeção é adaptada de 3 para 4 bandas (pesos RGB preservados; quarto canal = média dos três), o backbone ImageNet é mantido, a cabeça de segmentação é inicializada do zero e os logits de 1/4 de resolução são reamostrados bilinearmente para a entrada. O pacote `src/` cobre `config`, `io`/`bootstrap`/`setup`, `data/*`, `losses`, `metrics`, `evaluation`, `trainer` e `models/{unet,segformer}`, com `tests/` e CI (ruff, mypy, pytest e convenções de notebook). O primeiro treino do U-Net (dataset sem filtro e antes da correção de bbox/split espacial) está preservado como `emater_v1`, com metadados do dataset em `data/processed/archive_v1/` e figuras em `artifacts/figures/archive_v1/`; o `BASELINE.json` registra a limitação conhecida. Pendentes: análise comparativa (`12`), XAI (`13`/`14`) e síntese/disseminação (`15`/`16`) — consulte o `PLAN.md`.
+Estágios `00`–`12` implementados e versionados: aquisição Sentinel-2 (GEE, mosaicos por ano da fonte), máscaras de referência por fonte (MapBiomas 2025 / AlphaEarth 2024 / Emater 2018), comparação entre fontes e registro da decisão manual (`04`), pré-processamento (composite por ano), geração de patches por fonte + manifesto com filtro de pixels válidos, divisão espacial k-fold (k=5) por fonte, EDA, treino do **U-Net** (`09`) e treino do **SegFormer** (`10`) na fonte escolhida (Emater 2018) com o protocolo único (`src/trainer.py`), ignorando pixels fora do AOI (rótulo `-1`) na perda e nas métricas, **avaliação por pixel** (`11`) dos dois modelos com IoU/F1/Precisão/Recall por patch, por dobra e agregados, além de predições binárias persistidas, e **análise comparativa** (`12`) emparelhada por patch — diferença SegFormer − U-Net com IC bootstrap de 95%, teste t pareado, Wilcoxon com correção de Holm, d_z de Cohen, delta de Cliff, figura comparativa e mapas de erro TP/FP/FN/ignorado de patches representativos. O SegFormer usa `nvidia/mit-b1` por padrão: a primeira projeção é adaptada de 3 para 4 bandas (pesos RGB preservados; quarto canal = média dos três), o backbone ImageNet é mantido, a cabeça de segmentação é inicializada do zero e os logits de 1/4 de resolução são reamostrados bilinearmente para a entrada. O pacote `src/` cobre `config`, `io`/`bootstrap`/`setup`, `data/*`, `losses`, `metrics`, `evaluation`, `comparative`, `trainer` e `models/{unet,segformer}`, com `tests/` e CI (ruff, mypy, pytest e convenções de notebook). O primeiro treino do U-Net (dataset sem filtro e antes da correção de bbox/split espacial) está preservado como `emater_v1`, com metadados do dataset em `data/processed/archive_v1/` e figuras em `artifacts/figures/archive_v1/`; o `BASELINE.json` registra a limitação conhecida. Pendentes: XAI (`13`/`14`) e síntese/disseminação (`15`/`16`) — consulte o `PLAN.md`.
 
 ## Contribuição
 

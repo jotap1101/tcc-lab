@@ -244,3 +244,22 @@ def test_load_predictions_maps_patch_ids(environment) -> None:
 
     assert set(predictions) == {"tile_r0000_c0000", "tile_r0003_c0000"}
     assert next(iter(predictions.values())).shape == (PATCH_SIZE, PATCH_SIZE)
+
+
+def test_load_evaluation_summary(environment) -> None:
+    """O carregador do resumo deve devolver o payload consolidado do estágio 11."""
+    paths, _ = environment
+    evaluations = evaluation.evaluate_model(
+        paths, "unet", torch.device("cpu"), source_name=TEST_SOURCE
+    )
+    summary = evaluation.summarize_model(paths, "unet", TEST_SOURCE, evaluations)
+
+    loaded = evaluation.load_evaluation_summary(paths, "unet", TEST_SOURCE)
+
+    assert loaded == summary
+
+
+def test_load_evaluation_summary_requires_artifacts(tmp_path: Path) -> None:
+    """Sem o resumo do estágio 11, o carregador deve falhar com mensagem clara."""
+    with pytest.raises(FileNotFoundError, match="estágio 11"):
+        evaluation.load_evaluation_summary(_storage_paths(tmp_path), "unet", TEST_SOURCE)

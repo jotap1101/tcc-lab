@@ -101,6 +101,20 @@ def evaluation_summary_path(
     return evaluation_dir(storage_paths, model_name, source_name) / "summary.json"
 
 
+def load_evaluation_summary(
+    storage_paths: dict[str, Path], model_name: str, source_name: str
+) -> dict[str, Any]:
+    """Carrega o resumo consolidado da avaliação do modelo/fonte (falha se ausente)."""
+    from src import io
+
+    path = evaluation_summary_path(storage_paths, model_name, source_name)
+    if not io.path_exists(path):
+        raise FileNotFoundError(
+            f"Resumo de avaliação não encontrado: {path}. Execute o estágio 11 antes."
+        )
+    return json.loads(io.ensure_local_copy(path).read_text(encoding="utf-8"))
+
+
 def evaluation_figure_file_name(model_name: str, source_name: str) -> str:
     """Nome estável da figura de avaliação do modelo/fonte."""
     config = get_config()
