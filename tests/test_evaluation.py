@@ -263,3 +263,20 @@ def test_load_evaluation_summary_requires_artifacts(tmp_path: Path) -> None:
     """Sem o resumo do estágio 11, o carregador deve falhar com mensagem clara."""
     with pytest.raises(FileNotFoundError, match="estágio 11"):
         evaluation.load_evaluation_summary(_storage_paths(tmp_path), "unet", TEST_SOURCE)
+
+
+def test_summary_is_current_and_patch_metrics_loader(environment) -> None:
+    """O resumo vigente e as métricas concatenadas devem refletir todas as dobras."""
+    paths, _ = environment
+    evaluations = evaluation.evaluate_model(
+        paths, "unet", torch.device("cpu"), source_name=TEST_SOURCE
+    )
+    evaluation.summarize_model(paths, "unet", TEST_SOURCE, evaluations)
+
+    assert evaluation.summary_is_current(paths, "unet", TEST_SOURCE)
+    patch_metrics = evaluation.load_model_patch_metrics(paths, "unet", TEST_SOURCE)
+    assert len(patch_metrics) == 6
+    assert patch_metrics["patch_id"].is_unique
+
+    evaluation.predictions_path(paths, "unet", TEST_SOURCE, 0).unlink()
+    assert not evaluation.summary_is_current(paths, "unet", TEST_SOURCE)

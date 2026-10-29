@@ -26,16 +26,11 @@ from scipy import stats as scipy_stats
 from src import evaluation
 from src.config import get_config
 from src.data.mask_utils import reference_year
-from src.data.patch_generation import (
-    load_manifest,
-    patch_fingerprint_hash,
-    resolve_from_root,
-)
-from src.data.raster_utils import percentile_stretch
+from src.data.patch_generation import load_manifest, resolve_from_root
+from src.data.raster_utils import rgb_composite
 from src.data.source_decision import chosen_source
-from src.data.spatial_split import fold_count, split_fingerprint_hash
+from src.data.spatial_split import fold_count
 from src.evaluation import METRIC_KEYS, MODEL_NAMES
-from src.trainer import config_hash
 
 COMPARATIVE_SCHEMA_VERSION = 1
 BOOTSTRAP_ITERATIONS = 2000
@@ -116,18 +111,6 @@ def error_maps_figure_path(storage_paths: dict[str, Path], source_name: str) -> 
     return storage_paths["artifacts_figures"] / error_maps_figure_file_name(source_name)
 
 
-def _expected_summary_fingerprint(
-    storage_paths: dict[str, Path], source_name: str
-) -> dict[str, Any]:
-    """Fingerprint que o estágio 11 deveria ter registrado para a fonte vigente."""
-    return {
-        "manifest_fingerprint_hash": patch_fingerprint_hash(storage_paths, source_name),
-        "split_fingerprint_hash": split_fingerprint_hash(storage_paths, source_name),
-        "config_hash": config_hash(),
-        "threshold": evaluation.DEFAULT_THRESHOLD,
-    }
-
-
 def load_evaluation_summaries(
     storage_paths: dict[str, Path], source_name: str
 ) -> dict[str, dict[str, Any]]:
@@ -151,7 +134,7 @@ def summaries_are_current(
             summaries = load_evaluation_summaries(storage_paths, source_name)
         except FileNotFoundError:
             return False
-    expected = _expected_summary_fingerprint(storage_paths, source_name)
+    expected = evaluation.summary_fingerprint(storage_paths, source_name)
     expected_folds = list(range(fold_count()))
     for model_name in MODEL_NAMES:
         summary = summaries.get(model_name)
@@ -208,23 +191,6 @@ def _comparison_is_current(path: Path, fingerprint: dict[str, Any]) -> bool:
     return stored.get("fingerprint") == fingerprint
 
 
-def _load_model_patch_metrics(
-    storage_paths: dict[str, Path],
-    model_name: str,
-    source_name: str,
-    summary: dict[str, Any],
-) -> pd.DataFrame:
-    """Concatena as métricas por patch das dobras de um modelo."""
-    frames = [
-        evaluation.load_patch_metrics(storage_paths, model_name, source_name, int(item["fold"]))
-        for item in summary["per_fold"]
-    ]
-    frame = pd.concat(frames, ignore_index=True)
-    if frame["patch_id"].duplicated().any():
-        raise ValueError(f"Métricas por patch duplicadas para {model_name} na fonte {source_name}.")
-    return frame
-
-
 def _merge_patch_metrics(
     unet: pd.DataFrame, segformer: pd.DataFrame, source_name: str
 ) -> pd.DataFrame:
@@ -277,10 +243,8 @@ def load_aligned_patch_metrics(
     summaries: dict[str, dict[str, Any]],
 ) -> pd.DataFrame:
     """Carrega e emparelha as métricas por patch dos dois modelos pelo `patch_id`."""
-    unet = _load_model_patch_metrics(storage_paths, "unet", source_name, summaries["unet"])
-    segformer = _load_model_patch_metrics(
-        storage_paths, "segformer", source_name, summaries["segformer"]
-    )
+    unet = evaluation.load_model_patch_metrics(storage_paths, "unet", source_name)
+    segformer = evaluation.load_model_patch_metrics(storage_paths, "segformer", source_name)
     return _merge_patch_metrics(unet, segformer, source_name)
 
 
@@ -715,17 +679,6 @@ def error_code_map(prediction: np.ndarray, truth: np.ndarray, valid: np.ndarray)
     return codes
 
 
-def _image_rgb(image: np.ndarray, valid: np.ndarray) -> np.ndarray:
-    """Compõe RGB (B4, B3, B2) com estiramento de percentis e fundo preto inválido."""
-    bands = list(get_config()["data"]["bands"])
-    indices = [bands.index(band) for band in ("B4", "B3", "B2") if band in bands]
-    if len(indices) != 3:
-        raise ValueError(f"Bandas insuficientes para o RGB: {bands}")
-    rgb = np.dstack([percentile_stretch(image[index]) for index in indices])
-    rgb[~valid] = 0
-    return rgb
-
-
 def build_error_map_samples(
     storage_paths: dict[str, Path],
     source_name: str,
@@ -774,7 +727,7 @@ def build_error_map_samples(
                 patch_id=patch,
                 label=str(item["label"]),
                 fold=fold,
-                image_rgb=_image_rgb(image, valid),
+                image_rgb=rgb_composite(image, valid, list(get_config()["data"]["bands"])),
                 truth=truth,
                 valid=valid,
                 predictions=model_predictions,

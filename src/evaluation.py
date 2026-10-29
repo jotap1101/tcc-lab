@@ -115,6 +115,57 @@ def load_evaluation_summary(
     return json.loads(io.ensure_local_copy(path).read_text(encoding="utf-8"))
 
 
+def summary_fingerprint(storage_paths: dict[str, Path], source_name: str) -> dict[str, Any]:
+    """Fingerprint que um resumo do estágio 11 deve registrar para a fonte vigente."""
+    return {
+        "manifest_fingerprint_hash": patch_fingerprint_hash(storage_paths, source_name),
+        "split_fingerprint_hash": split_fingerprint_hash(storage_paths, source_name),
+        "config_hash": config_hash(),
+        "threshold": DEFAULT_THRESHOLD,
+    }
+
+
+def summary_is_current(storage_paths: dict[str, Path], model_name: str, source_name: str) -> bool:
+    """Indica se o resumo e os artefatos por dobra do estágio 11 estão vigentes."""
+    from src import io
+
+    path = evaluation_summary_path(storage_paths, model_name, source_name)
+    if not io.path_exists(path):
+        return False
+    try:
+        stored = json.loads(io.ensure_local_copy(path).read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return False
+    if stored.get("model") != model_name or stored.get("source_name") != source_name:
+        return False
+    if stored.get("fingerprint") != summary_fingerprint(storage_paths, source_name):
+        return False
+    folds = [int(item["fold"]) for item in stored.get("per_fold", [])]
+    if folds != list(range(fold_count())):
+        return False
+    for fold in folds:
+        if not io.path_exists(patch_metrics_path(storage_paths, model_name, source_name, fold)):
+            return False
+        if not io.path_exists(predictions_path(storage_paths, model_name, source_name, fold)):
+            return False
+    return True
+
+
+def load_model_patch_metrics(
+    storage_paths: dict[str, Path], model_name: str, source_name: str
+) -> pd.DataFrame:
+    """Carrega e concatena as métricas por patch de todas as dobras avaliadas."""
+    summary = load_evaluation_summary(storage_paths, model_name, source_name)
+    frames = [
+        load_patch_metrics(storage_paths, model_name, source_name, int(item["fold"]))
+        for item in summary["per_fold"]
+    ]
+    frame = pd.concat(frames, ignore_index=True)
+    if frame["patch_id"].duplicated().any():
+        raise ValueError(f"Métricas por patch duplicadas para {model_name} na fonte {source_name}.")
+    return frame
+
+
 def evaluation_figure_file_name(model_name: str, source_name: str) -> str:
     """Nome estável da figura de avaliação do modelo/fonte."""
     config = get_config()

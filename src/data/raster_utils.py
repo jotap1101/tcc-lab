@@ -37,6 +37,21 @@ def percentile_stretch(band: np.ndarray, low: int = 2, high: int = 98) -> np.nda
     return (stretched * 255).astype(np.uint8)
 
 
+def rgb_composite(
+    image: np.ndarray,
+    valid: np.ndarray,
+    band_names: list[str],
+    rgb_bands: tuple[str, str, str] = ("B4", "B3", "B2"),
+) -> np.ndarray:
+    """Compõe um RGB (B4/B3/B2) com estiramento de percentis e fundo preto inválido."""
+    indices = [band_names.index(band) for band in rgb_bands if band in band_names]
+    if len(indices) != len(rgb_bands):
+        raise ValueError(f"Bandas insuficientes para o RGB: {band_names}")
+    rgb = np.dstack([percentile_stretch(image[index]) for index in indices])
+    rgb[~valid] = 0
+    return rgb
+
+
 def render_figure(build_fn: Callable[[Any], Any]) -> bytes:
     """Renderiza uma figura matplotlib como bytes PNG (backend Agg, sem display).
 

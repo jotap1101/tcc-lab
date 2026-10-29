@@ -44,7 +44,7 @@ tcc/
 │   ├── comparative.py
 │   ├── trainer.py
 │   ├── models/{unet,segformer}.py
-│   └── xai/{gradcam,attention_rollout}.py
+│   └── xai/{common,gradcam,attention_rollout}.py
 ├── tests/                         # pytest somente sobre src/
 ├── notebooks/                     # 17 arquivos .ipynb sequenciais
 ├── scripts/                       # geradores de tokens OAuth (Drive, GEE) — uso local
@@ -63,7 +63,7 @@ MyDrive/tcc/                       # raiz canônica de todo o armazenamento do p
 ├── data/{raw,interim,processed,external}/   # dados espectrais, máscaras, patches
 │   └── interim/{mapbiomas,alphaearth,emater,...}/   # ground truth por fonte (ano próprio)
 ├── models/{unet,segformer}/       # pesos (espelhados localmente, git-ignored; baselines: *_v1/)
-├── artifacts/{metrics,figures,runs}/       # métricas, figuras, logs (baselines: *_v1/ e archive_v1/)
+├── artifacts/{metrics,figures,runs,xai}/   # métricas, figuras, logs e mapas de XAI (baselines: *_v1/ e archive_v1/)
 ├── repo/src/                      # espelho do código-fonte (entrega do src/ ao runtime)
 ├── secrets/                       # tokens OAuth persistidos (GEE, Drive) — nunca versionar
 └── ...                            # qualquer subpasta mais profunda exigida pelo pipeline
@@ -117,7 +117,7 @@ Cada notebook é um estágio isolado com uma única responsabilidade e entradas/
 
 - **`config.yaml`**: `aoi` (código da região `310044`, `vector_source` `ibge_mesh`, `mesh_path` apontando para `data/external/ibge/mg_rg_immediatas_2025/`), `data` (`collection`, `dates` — fallback para fontes sem `year`, `bands`, `patch_size`, `coffee_min_ratio`, `min_valid_fraction` — fração mínima de pixels válidos por patch, descartando área fora do AOI, `cloud_threshold`, `crs`, `export`), `gee` (`project` — ID do projeto Cloud para `ee.Initialize`), `ground_truth` (`chosen_source` — decisão manual — + bloco `sources` com `year` próprio por fonte, `collection_id`/`collection_filter`, classe/limiar e `enabled`), `splits.fold_count`, `reproducibility.seed`, `model` (`unet_channels`, `segformer_variant`), pesos de `loss`, `augmentation` (aumentações geométricas determinísticas reseedadas por época: `hflip_prob`, `vflip_prob`, `rot90_prob`), `training` (`lr`, `epochs`, `batch_size`, `weight_decay`, `num_workers`). O bloco `storage` mapeia a raiz `tcc/` do Drive e toda subpasta (`data`, `models`, `artifacts`, `repo`, `secrets`, ...) — todos os caminhos são resolvidos daqui, nunca hardcoded.
 - **Colunas do `manifest_<fonte>.parquet`**: `patch_id`, `tile_id`, `fold`, `row`, `col`, `bbox`, `coffee_ratio`, `valid_fraction`, `mask_source`, `image_path`, `mask_path`. `coffee_ratio` é medido apenas sobre os pixels válidos do patch; `valid_fraction` registra a fração dentro do AOI.
-- **Artefatos** (todos sob a raiz `tcc/` do Drive, caminhos resolvidos de `config.yaml`): `MyDrive/tcc/artifacts/metrics/{model}/{fonte}/fold_{i}.json` (com `manifest_fingerprint_hash`, `split_fingerprint_hash` e `config_hash`), `MyDrive/tcc/artifacts/metrics/{model}/{fonte}/evaluation/{fold_{i}.json,summary.json,patch_metrics_fold_{i}.parquet,predictions_fold_{i}.npz}` (métricas de avaliação por dobra, resumo agregado, métricas por patch e predições binárias — estágio 11), `MyDrive/tcc/artifacts/metrics/comparative/<fonte>/comparison.json` (comparação estatística emparelhada — estágio 12), `MyDrive/tcc/artifacts/runs/{model}/{fonte}/fold_{i}.json` + `run.meta.json`, `MyDrive/tcc/artifacts/figures/` (incluindo `comparison_<região>_<ano>_<fonte>.png` e `error_maps_<região>_<ano>_<fonte>.png` — estágio 12), `MyDrive/tcc/models/{model}/{fonte}/fold_{i}.pt`, `MyDrive/tcc/data/processed/manifest_<fonte>.parquet` e `MyDrive/tcc/data/processed/normalization_stats_<fonte>.json` (estatísticas de normalização por banda — estágio 08). Baselines históricos ficam em `models/{model}/{fonte}_v1/`, `artifacts/metrics|runs/{model}/{fonte}_v1/`, `data/processed/archive_v1/` e `artifacts/figures/archive_v1/`.
+- **Artefatos** (todos sob a raiz `tcc/` do Drive, caminhos resolvidos de `config.yaml`): `MyDrive/tcc/artifacts/metrics/{model}/{fonte}/fold_{i}.json` (com `manifest_fingerprint_hash`, `split_fingerprint_hash` e `config_hash`), `MyDrive/tcc/artifacts/metrics/{model}/{fonte}/evaluation/{fold_{i}.json,summary.json,patch_metrics_fold_{i}.parquet,predictions_fold_{i}.npz}` (métricas de avaliação por dobra, resumo agregado, métricas por patch e predições binárias — estágio 11), `MyDrive/tcc/artifacts/metrics/comparative/<fonte>/comparison.json` (comparação estatística emparelhada — estágio 12), `MyDrive/tcc/artifacts/runs/{model}/{fonte}/fold_{i}.json` + `run.meta.json`, `MyDrive/tcc/artifacts/xai/gradcam/unet/<fonte>/{gradcam_maps.npz,gradcam_metadata.json}` (mapas e metadata Grad-CAM — estágio 13), `MyDrive/tcc/artifacts/figures/` (incluindo `comparison_<região>_<ano>_<fonte>.png` e `error_maps_<região>_<ano>_<fonte>.png` — estágio 12, e `gradcam_unet_<região>_<ano>_<fonte>.png` — estágio 13), `MyDrive/tcc/models/{model}/{fonte}/fold_{i}.pt`, `MyDrive/tcc/data/processed/manifest_<fonte>.parquet` e `MyDrive/tcc/data/processed/normalization_stats_<fonte>.json` (estatísticas de normalização por banda — estágio 08). Baselines históricos ficam em `models/{model}/{fonte}_v1/`, `artifacts/metrics|runs/{model}/{fonte}_v1/`, `data/processed/archive_v1/` e `artifacts/figures/archive_v1/`.
 
 ## 7. Rastreador de progresso
 
@@ -159,7 +159,7 @@ Cada notebook é um estágio isolado com uma única responsabilidade e entradas/
 
 ### Fase 6 — XAI
 
-- [ ] `13_xai_gradcam_unet.ipynb`
+- [x] `13_xai_gradcam_unet.ipynb` — Grad-CAM da U-Net na fonte escolhida usando os pesos da dobra de cada patch (estágio 09) e o resumo vigente do estágio 11. A camada-alvo é o codificador mais profundo (`encoders[-1]`), a pontuação soma os logits da classe café na região de referência do patch e o mapa é reamostrado bilinearmente para a resolução de entrada. Patches representativos são selecionados deterministicamente (maior/menor IoU, maior proporção de café e IoU mediano); mapas e metadata ficam em `artifacts/xai/gradcam/unet/<fonte>/` e a figura em `artifacts/figures/`. Reutiliza os artefatos apenas quando resumo do estágio 11, pesos das dobras e configuração coincidem.
 - [ ] `14_xai_attention_rollout_segformer.ipynb`
 
 ### Fase 7 — Síntese e Disseminação
@@ -186,9 +186,10 @@ Cada notebook é um estágio isolado com uma única responsabilidade e entradas/
 - [x] `trainer.py` (protocolo de treino único, parametrizado pelo modelo — sem duplicação entre notebooks 09/10)
 - [x] `models/unet.py`
 - [x] `models/segformer.py` (SegFormer binário com adaptação 3→4 bandas e logits na resolução da entrada)
-- [ ] `xai/gradcam.py`, `xai/attention_rollout.py`
+- [x] `xai/common.py` (seleção determinística de patches, carga normalizada e RGB), `xai/gradcam.py` (Grad-CAM da U-Net — estágio 13)
+- [ ] `xai/attention_rollout.py`
 - [x] `io.py` (detecção de plataforma + montagem do Drive + garantia/resolução da raiz `tcc/` + entrega do `src/` via espelho), `bootstrap.py` (entrega do `src/` ao runtime antes do import + gravação de `src/.tcc_commit`), `setup.py` (prólogo de runtime + `install_runtime_requirements` com reinício automático em divergência de ABI), `utils.py`
-- [x] `tests/` (config, io, bootstrap, setup, utils, data/*, losses, metrics, evaluation, comparative, trainer e modelos — pytest)
+- [x] `tests/` (config, io, bootstrap, setup, utils, data/*, losses, metrics, evaluation, comparative, xai/gradcam, trainer e modelos — pytest)
 
 ## 8. Checklist de reprodutibilidade
 
@@ -218,6 +219,7 @@ Cada notebook é um estágio isolado com uma única responsabilidade e entradas/
 - **Baseline:** o primeiro treino do U-Net (dataset sem filtro e antes da correção de bbox/split) foi preservado como `emater_v1`; os metadados do dataset antigo estão em `data/processed/archive_v1/`, as figuras em `artifacts/figures/archive_v1/` e o `BASELINE.json` registra a limitação.
 - **SegFormer (estágio 10):** `nvidia/mit-b1` via Hugging Face Transformers, com o mesmo `src/trainer.py` do U-Net; a primeira projeção é expandida de 3 para 4 bandas preservando os pesos RGB e inicializando o quarto canal com a média dos três, a cabeça de segmentação é inicializada do zero (o checkpoint é de backbone ImageNet) e os logits em 1/4 de resolução são reamostrados bilinearmente para a entrada.
 - **Determinismo do SegFormer:** o upsampling bilinear não tem backward determinístico no CUDA no PyTorch; os estágios 10 e 11 usam `torch.use_deterministic_algorithms(True, warn_only=True)`, mantendo seeds/cuDNN e registrando a configuração efetiva do treino em `run.meta.json` (`deterministic_algorithms.warn_only = true`).
+- **XAI Grad-CAM (estágio 13):** a explicação usa os pesos da dobra de cada patch (sem vazamento entre treino e validação), a camada-alvo `encoders[-1]` do U-Net e a soma dos logits da classe café na região de referência (pixels de café válidos). A seleção de patches é determinística (maior/menor IoU, maior `coffee_ratio` e IoU mediano, com desempate por `patch_id`); o mapa é normalizado em [0,1] e reamostrado bilinearmente para a resolução de entrada. Mapas, metadata com fingerprint e figura são persistidos e reutilizados apenas quando o resumo do estágio 11, os pesos das dobras e a configuração coincidem. O cálculo usa autograd sem atualizar pesos e é compatível com GPU ou CPU.
 - **Dependências:** instalação centralizada em `src.setup.install_runtime_requirements()`, com reinício automático do kernel em divergência de ABI. Notebooks que usam Transformers (`10`, `11`) também chamam `src.setup.remove_incompatible_torchaudio()`: o ambiente do Kaggle pode trazer um `torchaudio` compilado para outra versão de CUDA, que impede o import do Transformers; como o projeto não usa áudio, o pacote é removido apenas quando não importa.
 - **Rastreabilidade:** `commit_sha` vem do git local ou de `src/.tcc_commit`, gravado pelo bootstrap; `run.meta.json` registra config hash, fingerprint do manifesto, configuração do modelo (`model_config`) e estado do determinismo, além do ambiente.
 
