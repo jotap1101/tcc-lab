@@ -68,11 +68,18 @@ class GradCamResult:
     skipped: bool
 
 
+def _xai_root(storage_paths: dict[str, Path]) -> Path:
+    """Raiz de XAI: chave dedicada quando presente, senão derivada de artifacts/."""
+    if "artifacts_xai" in storage_paths:
+        return storage_paths["artifacts_xai"]
+    return storage_paths["artifacts_metrics"].parent / "xai"
+
+
 def gradcam_dir(
     storage_paths: dict[str, Path], source_name: str, model_name: str = MODEL_NAME
 ) -> Path:
     """Diretório canônico dos mapas Grad-CAM do modelo/fonte."""
-    return storage_paths["artifacts_xai"] / "gradcam" / model_name / source_name
+    return _xai_root(storage_paths) / "gradcam" / model_name / source_name
 
 
 def gradcam_maps_path(

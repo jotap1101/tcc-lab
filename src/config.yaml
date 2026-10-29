@@ -96,7 +96,6 @@ storage:
     artifacts_metrics: "artifacts/metrics"
     artifacts_metrics_ground_truth: "artifacts/metrics/ground_truth"
     artifacts_figures: "artifacts/figures"
-    artifacts_xai: "artifacts/xai"
     artifacts_runs: "artifacts/runs"
     secrets: "secrets"
     repo: "repo"  # espelho do código-fonte (src/) usado como entrega ao runtime

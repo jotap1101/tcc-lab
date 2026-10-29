@@ -291,3 +291,13 @@ def test_render_gradcam_figure_returns_png(tmp_path, monkeypatch) -> None:
     png = gradcam.render_gradcam_figure(result.samples)
 
     assert png.startswith(b"\x89PNG")
+
+
+def test_gradcam_dir_derives_from_artifacts_without_config_key(tmp_path: Path) -> None:
+    """Sem a chave dedicada, a raiz de XAI deve ser derivada de artifacts/metrics."""
+    paths = _storage_paths(tmp_path)
+    paths.pop("artifacts_xai")
+
+    target = gradcam.gradcam_dir(paths, TEST_SOURCE)
+
+    assert target == paths["artifacts_metrics"].parent / "xai" / "gradcam" / "unet" / TEST_SOURCE
