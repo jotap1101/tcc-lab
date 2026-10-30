@@ -6,8 +6,7 @@ tokens reais NUNCA são versionados (repo público; regra do `AGENTS.md`).
 ## Por que existem tokens?
 
 O **Colab** autentica com a conta logada de forma nativa (Drive e Earth Engine).
-O **Kaggle** não monta o Drive e roda em modo headless — por isso precisa de dois
-tokens, obtidos uma única vez com a **conta principal**:
+O **Kaggle** não monta o Drive e roda em modo headless — por isso precisa de tokens obtidos uma única vez com a **conta principal** (Drive, Earth Engine) e de um token de escrita do Hugging Face para o release:
 
 | Variável            | Para quê                                  | Como obter                                   | Onde guardar                          |
 | ------------------- | ----------------------------------------- | -------------------------------------------- | ------------------------------------- |
@@ -15,8 +14,9 @@ tokens, obtidos uma única vez com a **conta principal**:
 | `GDRIVE_TOKEN_FILE` | Alternativa: caminho de um arquivo token  | idem (envie o arquivo como dataset)          | dataset privado `tcc-secrets`          |
 | `GEE_CREDENTIALS`   | Autenticação headless do Earth Engine     | `scripts/generate_gee_credentials.py`        | dataset privado `tcc-secrets`          |
 | `GEE_PROJECT`       | Projeto Cloud do GEE (`ee.Initialize`)    | ID visto no Earth Engine Code Editor         | `src/config.yaml` (`gee.project`)      |
+| `HF_TOKEN`          | Publicação do dataset/modelos no HF Hub   | `huggingface.co/settings/tokens` (escrita)   | Kaggle Secrets ou env var              |
 
-O dataset privado é declarado em `src/config.yaml` (`secrets.kaggle_dataset`).
+O `HF_TOKEN` é lido pelo estágio 16 (`src.release.huggingface_token`) e nunca é impresso. O dataset privado é declarado em `src/config.yaml` (`secrets.kaggle_dataset`).
 `src/utils.get_secret` resolve os segredos na ordem **env var → Kaggle Secret →
 dataset** (`/kaggle/input/<slug>/`), então anexar o dataset uma vez dispensa
 configurar Secrets em cada notebook novo.
