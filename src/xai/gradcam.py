@@ -68,18 +68,11 @@ class GradCamResult:
     skipped: bool
 
 
-def _xai_root(storage_paths: dict[str, Path]) -> Path:
-    """Raiz de XAI: chave dedicada quando presente, senão derivada de artifacts/."""
-    if "artifacts_xai" in storage_paths:
-        return storage_paths["artifacts_xai"]
-    return storage_paths["artifacts_metrics"].parent / "xai"
-
-
 def gradcam_dir(
     storage_paths: dict[str, Path], source_name: str, model_name: str = MODEL_NAME
 ) -> Path:
     """Diretório canônico dos mapas Grad-CAM do modelo/fonte."""
-    return _xai_root(storage_paths) / "gradcam" / model_name / source_name
+    return common.xai_root(storage_paths) / "gradcam" / model_name / source_name
 
 
 def gradcam_maps_path(
@@ -182,16 +175,11 @@ def compute_gradcam(
     return normalized.cpu().numpy().astype(np.float32)
 
 
-def _weights_by_fold(summary: dict[str, Any]) -> dict[int, str]:
-    """Hash dos pesos de cada dobra registrado no resumo do estágio 11."""
-    return {int(item["fold"]): str(item["weights_sha256"]) for item in summary["per_fold"]}
-
-
 def gradcam_fingerprint(
     summary: dict[str, Any], selected: list[dict[str, Any]], source_name: str
 ) -> dict[str, Any]:
     """Fingerprint que valida a reutilização dos mapas Grad-CAM."""
-    weights = _weights_by_fold(summary)
+    weights = common.weights_by_fold(summary)
     used_folds = sorted({int(item["fold"]) for item in selected})
     return {
         "schema_version": GRADCAM_SCHEMA_VERSION,
@@ -209,24 +197,6 @@ def gradcam_fingerprint(
             {"patch_id": str(item["patch_id"]), "fold": int(item["fold"])} for item in selected
         ],
     }
-
-
-def _artifacts_are_current(
-    metadata_path: Path,
-    maps_path: Path,
-    figure_path: Path,
-    fingerprint: dict[str, Any],
-) -> bool:
-    """Indica se os três artefatos existem e correspondem ao fingerprint vigente."""
-    from src import io
-
-    if not all(io.path_exists(path) for path in (metadata_path, maps_path, figure_path)):
-        return False
-    try:
-        stored = json.loads(io.ensure_local_copy(metadata_path).read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        return False
-    return stored.get("fingerprint") == fingerprint
 
 
 def _persist_maps(path: Path, samples: list[GradCamSample]) -> None:
@@ -270,7 +240,9 @@ def run_gradcam(
     maps_file = gradcam_maps_path(storage_paths, source)
     metadata_file = gradcam_metadata_path(storage_paths, source)
     figure_file = gradcam_figure_path(storage_paths, source)
-    if not force and _artifacts_are_current(metadata_file, maps_file, figure_file, fingerprint):
+    if not force and common.artifacts_are_current(
+        metadata_file, (maps_file, figure_file), fingerprint
+    ):
         metadata = json.loads(io.ensure_local_copy(metadata_file).read_text(encoding="utf-8"))
         print("Mapas Grad-CAM já vigentes (artefatos reutilizados).")
         return GradCamResult(
@@ -285,7 +257,7 @@ def run_gradcam(
 
     device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
     stats, manifest = common.load_stats_and_manifest(storage_paths, source)
-    weights = _weights_by_fold(summary)
+    weights = common.weights_by_fold(summary)
     models: dict[int, tuple[nn.Module, nn.Module]] = {}
     samples: list[GradCamSample] = []
     for item in selected:

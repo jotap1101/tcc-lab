@@ -8,6 +8,7 @@ mesmo protocolo de amostragem e de visualização.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -33,6 +34,35 @@ class PatchSample:
     valid: np.ndarray
     normalized: torch.Tensor
     reference: np.ndarray
+
+
+def xai_root(storage_paths: dict[str, Path]) -> Path:
+    """Raiz de XAI: chave dedicada quando presente, senão derivada de artifacts/."""
+    if "artifacts_xai" in storage_paths:
+        return storage_paths["artifacts_xai"]
+    return storage_paths["artifacts_metrics"].parent / "xai"
+
+
+def weights_by_fold(summary: dict[str, Any]) -> dict[int, str]:
+    """Hash dos pesos de cada dobra registrado no resumo do estágio 11."""
+    return {int(item["fold"]): str(item["weights_sha256"]) for item in summary["per_fold"]}
+
+
+def artifacts_are_current(
+    metadata_path: Path,
+    artifact_paths: tuple[Path, ...],
+    fingerprint: dict[str, Any],
+) -> bool:
+    """Indica se metadata e artefatos existem e correspondem ao fingerprint vigente."""
+    from src import io
+
+    if not all(io.path_exists(path) for path in (metadata_path, *artifact_paths)):
+        return False
+    try:
+        stored = json.loads(io.ensure_local_copy(metadata_path).read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return False
+    return stored.get("fingerprint") == fingerprint
 
 
 def select_representative_patches(
