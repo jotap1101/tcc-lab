@@ -358,3 +358,10 @@ def test_run_release_rejects_weights_diverging_from_evaluation(tmp_path, monkeyp
             segformer_repo="a/s",
             api=FakeApi(),
         )
+
+
+def test_huggingface_token_strips_trailing_whitespace(monkeypatch) -> None:
+    """Arquivos do dataset podem terminar em newline; o token deve ser normalizado."""
+    monkeypatch.setattr("src.utils.get_secret", lambda name: "hf_test\n")
+
+    assert release.huggingface_token() == "hf_test"

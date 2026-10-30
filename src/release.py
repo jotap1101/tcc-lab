@@ -96,6 +96,7 @@ def huggingface_token() -> str:
     from src.utils import get_secret
 
     token = get_secret("HF_TOKEN")
+    token = token.strip() if token else None
     if not token:
         raise RuntimeError(
             "Publicação no Hugging Face exige HF_TOKEN no ambiente ou nos Secrets "
