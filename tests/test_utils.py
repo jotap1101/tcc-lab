@@ -128,3 +128,12 @@ def test_get_secret_reads_nested_dataset_layout(tmp_path, monkeypatch):
     )
     monkeypatch.delenv("GDRIVE_TOKEN", raising=False)
     assert get_secret("GDRIVE_TOKEN") == '{"token": "nested"}'
+
+
+def test_get_secret_reads_hf_token_from_private_dataset(tmp_path, monkeypatch):
+    """O HF_TOKEN também é lido do dataset privado, em hf_token.txt."""
+    dataset_dir = _fake_dataset(tmp_path, monkeypatch)
+    (dataset_dir / "hf_token.txt").write_text("hf_secret", encoding="utf-8")
+    monkeypatch.delenv("HF_TOKEN", raising=False)
+
+    assert get_secret("HF_TOKEN") == "hf_secret"

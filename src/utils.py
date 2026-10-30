@@ -17,6 +17,7 @@ _KAGGLE_DATASET_SECRET_FILES = {
     "GDRIVE_TOKEN": "drive_token.json",
     "GDRIVE_TOKEN_FILE": "drive_token.json",
     "GEE_CREDENTIALS": "earthengine_credentials.json",
+    "HF_TOKEN": "hf_token.txt",
 }
 
 

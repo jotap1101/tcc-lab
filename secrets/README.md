@@ -14,7 +14,7 @@ O **Kaggle** não monta o Drive e roda em modo headless — por isso precisa de 
 | `GDRIVE_TOKEN_FILE` | Alternativa: caminho de um arquivo token  | idem (envie o arquivo como dataset)          | dataset privado `tcc-secrets`          |
 | `GEE_CREDENTIALS`   | Autenticação headless do Earth Engine     | `scripts/generate_gee_credentials.py`        | dataset privado `tcc-secrets`          |
 | `GEE_PROJECT`       | Projeto Cloud do GEE (`ee.Initialize`)    | ID visto no Earth Engine Code Editor         | `src/config.yaml` (`gee.project`)      |
-| `HF_TOKEN`          | Publicação do dataset/modelos no HF Hub   | `huggingface.co/settings/tokens` (escrita)   | Kaggle Secrets ou env var              |
+| `HF_TOKEN`          | Publicação do dataset/modelos no HF Hub   | `huggingface.co/settings/tokens` (escrita)   | dataset privado (`hf_token.txt`), Kaggle Secrets ou env var |
 
 O `HF_TOKEN` é lido pelo estágio 16 (`src.release.huggingface_token`) e nunca é impresso. O dataset privado é declarado em `src/config.yaml` (`secrets.kaggle_dataset`).
 `src/utils.get_secret` resolve os segredos na ordem **env var → Kaggle Secret →

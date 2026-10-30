@@ -29,12 +29,15 @@ from _kaggle_cli import authenticated_username, find_kaggle_cli, run_cli
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SECRETS_DIR = REPO_ROOT / "secrets"
 DATASET_FILES = ("drive_token.json", "earthengine_credentials.json")
+OPTIONAL_DATASET_FILES = ("hf_token.txt",)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dataset-id", default=None, help="owner/slug (padrão: config.yaml)")
-    parser.add_argument("--message", default="Atualiza tokens do projeto", help="mensagem da versão")
+    parser.add_argument(
+        "--message", default="Atualiza tokens do projeto", help="mensagem da versão"
+    )
     parser.add_argument("--create", action="store_true", help="força a criação do dataset")
     args = parser.parse_args()
 
@@ -58,8 +61,12 @@ def main() -> None:
 
     with tempfile.TemporaryDirectory() as staging:
         staging_path = Path(staging)
-        for name in DATASET_FILES:
-            shutil.copy2(SECRETS_DIR / name, staging_path / name)
+        for name in (*DATASET_FILES, *OPTIONAL_DATASET_FILES):
+            source = SECRETS_DIR / name
+            if source.is_file():
+                shutil.copy2(source, staging_path / name)
+            elif name in DATASET_FILES:
+                raise FileNotFoundError(f"Token ausente em {SECRETS_DIR}: {name}")
         metadata = {
             "id": dataset_id,
             "title": dataset_id.split("/")[-1].replace("-", " "),
@@ -69,9 +76,11 @@ def main() -> None:
             json.dumps(metadata, indent=2) + "\n", encoding="utf-8"
         )
 
-        exists = False if args.create else run_cli(
-            cli, ["datasets", "files", dataset_id], echo=False
-        )[0] == 0
+        exists = (
+            False
+            if args.create
+            else run_cli(cli, ["datasets", "files", dataset_id], echo=False)[0] == 0
+        )
         if exists:
             code, output = run_cli(
                 cli, ["datasets", "version", "-p", str(staging_path), "-m", args.message]
