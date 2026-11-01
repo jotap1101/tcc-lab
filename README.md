@@ -1,8 +1,9 @@
-# Trabalho de Conclusão de Curso – Bacharelado em Ciência da Computação (IFSULDEMINAS)
+# TCC — Segmentação Semântica de Lavouras Cafeeiras
 
-Segmentação Semântica de Lavouras Cafeeiras: Análise Comparativa entre Redes Neurais Convolucionais (CNN) e Vision Transformers (ViT) na Agricultura de Precisão.
+Análise comparativa entre Redes Neurais Convolucionais (U-Net) e Vision
+Transformers (SegFormer) na agricultura de precisão.
 
-O estudo tem como alvo a Região Geográfica Imediata de Guaxupé – MG, Brasil, utilizando imagens Sentinel-2 Nível-2A para avaliar como a transição de um viés convolucional local para a autoatenção global afeta a precisão geométrica e a interpretabilidade sob as restrições do relevo montanhoso.
+Bacharelado em Ciência da Computação — IFSULDEMINAS.
 
 ## Sumário
 
@@ -17,92 +18,299 @@ O estudo tem como alvo a Região Geográfica Imediata de Guaxupé – MG, Brasil
 
 ## Visão Geral
 
-- **Tarefa:** segmentação semântica binária (café vs. não-café).
-- **Modelos:** U-Net (CNN) e SegFormer (ViT, MiT-b1 — configurável para b0–b2).
-- **Dados:** Sentinel-2 Nível-2A, bandas B2/B3/B4/B8 com resolução espacial de 10 m.
-- **Função de perda:** combinação de Dice + Focal + Boundary Loss.
-- **Validação:** k-fold espacial (k=5) com métricas em nível de pixel: IoU, F1-Score, Precisão e Revocação.
+### Objetivo
+
+Estudo comparativo entre duas famílias de arquiteturas para **segmentação
+semântica binária** (café vs. não-café) de lavouras cafeeiras.
+
+O foco é avaliar como a transição de um **viés convolucional local** (U-Net)
+para a **autoatenção global** (SegFormer) afeta:
+
+- a precisão geométrica das máscaras;
+- a interpretabilidade das decisões do modelo;
+- o desempenho sob as restrições do relevo montanhoso.
+
+### Recorte territorial e dados
+
+- **Região de estudo:** Região Geográfica Imediata de Guaxupé – MG, Brasil
+  (código IBGE `310044`).
+- **Imagens:** Sentinel-2 Nível-2A, bandas **B2, B3, B4 e B8**, a **10 m**.
+- **Aquisição:** Google Earth Engine (GEE), com mosaicos sem nuvens por ano.
+- **Recorte:** patches de **512×512 pixels**.
+
+### Modelos comparados
+
+- **U-Net (CNN):** arquitetura encoder-decoder convolucional, referência local.
+- **SegFormer (ViT):** `nvidia/mit-b1` por padrão (configurável para b0–b2),
+  com a primeira projeção adaptada de 3 para 4 bandas.
+- **Protocolo único:** mesmo split, perda, otimizador, scheduler, sementes e
+  métricas — apenas a arquitetura difere.
+
+### Métricas e explicabilidade
+
+- **Validação:** k-fold espacial (k = 5).
+- **Métricas em nível de pixel:** IoU, F1-Score, Precisão e Revocação.
 - **Explicabilidade:** Grad-CAM (U-Net) e Attention Rollout (SegFormer).
 
 ## Metodologia
 
-O pipeline abrange aquisição, pré-processamento, treinamento, avaliação e explicabilidade:
+O pipeline segue seis blocos encadeados, cada um com estágios de notebook
+correspondentes.
 
-1. Aquisição no Google Earth Engine de mosaicos Sentinel-2 e máscaras de referência por fonte (MapBiomas 2025 / AlphaEarth 2024 / Emater 2018 — cada fonte usa o ano mais recente com dados disponíveis).
-2. Mascaramento de nuvens (QA60), normalização e recorte em patches de 512×512 pixels, descartando patches com menos de `data.min_valid_fraction` de pixels válidos (área fora do AOI).
-3. Particionamento em k-fold espacial para evitar vazamento por autocorrelação espacial; pixels inválidos remanescentes recebem o rótulo `-1` e são ignorados pela perda e pelas métricas.
-4. Protocolo de treinamento idêntico para ambas as arquiteturas (`09`/`10`) — apenas o modelo difere.
-5. Avaliação de métricas em nível de pixel nas dobras espaciais (`11`), com predições e métricas por patch persistidas, seguida da comparação estatística emparelhada (`12`) — IC bootstrap, teste t, Wilcoxon com correção de Holm, tamanhos de efeito e mapas de erro TP/FP/FN/ignorado — da geração de mapas de calor de XAI (`13`/`14`), da síntese dos resultados em tabelas e figuras (`15`) e da publicação do dataset/modelos no Hugging Face Hub (`16`).
+### 1. Aquisição e ground truth
 
-O `PLAN.md` é o roteiro oficial, com ordenação das fases, entradas/saídas de cada notebook e um rastreador de progresso.
+- Mosaicos Sentinel-2 sem nuvens (QA60) e máscaras de referência por fonte.
+- Fontes de referência: **MapBiomas 2025**, **AlphaEarth 2024** e
+  **Emater 2018** — cada uma usa o ano mais recente disponível.
+
+### 2. Pré-processamento e dataset
+
+- Composite normalizado por ano e recorte em patches de 512×512.
+- Patches com menos de `data.min_valid_fraction` de pixels válidos são
+  descartados; os pixels inválidos restantes recebem o rótulo `-1`.
+- Cada fonte tem seu próprio conjunto de patches e manifesto.
+- Divisão em k-fold espacial para evitar vazamento por autocorrelação espacial.
+
+### 3. Treinamento
+
+- U-Net e SegFormer treinados com o mesmo protocolo (`src/trainer.py`).
+- Perda multivariada: **Dice + Focal + Boundary**.
+- Pixels com rótulo `-1` são ignorados pela perda e pelas métricas.
+
+### 4. Avaliação e comparação
+
+- Métricas por patch, por dobra e agregadas (estágio `11`).
+- Comparação estatística emparelhada entre arquiteturas (estágio `12`):
+  - IC bootstrap de 95% e teste t pareado;
+  - Wilcoxon com correção de Holm;
+  - tamanhos de efeito (d_z de Cohen e delta de Cliff);
+  - mapas de erro TP/FP/FN/ignorado.
+
+### 5. Explicabilidade
+
+- **Grad-CAM** da U-Net (estágio `13`), a partir do encoder mais profundo.
+- **Attention Rollout** do SegFormer (estágio `14`), na última etapa do
+  codificador hierárquico.
+
+### 6. Síntese e disseminação
+
+- Consolidação dos resultados em tabelas CSV/LaTeX e figuras (estágio `15`).
+- Publicação do dataset e dos pesos no Hugging Face Hub (estágio `16`).
+
+O [`PLAN.md`](PLAN.md) é o roteiro oficial, com a ordenação das fases, as
+entradas/saídas de cada notebook e o rastreador de progresso.
 
 ## Estrutura do Repositório
 
+### Código e documentação
+
 ```bash
 tcc/
-├── AGENTS.md              # fonte de verdade para regras de código e formatação
-├── PLAN.md                # roteiro de implementação
-├── pyproject.toml         # uv, ruff, mypy, pytest
-├── requirements-runtime.txt  # versões pinadas instaladas pela célula de dependências de cada notebook
-├── src/                   # pacote Python compartilhado (config, io, bootstrap, data, losses, metrics, evaluation, comparative, synthesis, release, trainer, models, xai, ...)
-├── tests/                 # pytest apenas sobre src/
-├── notebooks/             # estágios .ipynb sequenciais
-├── scripts/               # geradores de tokens OAuth (Drive, GEE) — uso local, para o Kaggle
-├── secrets/               # apenas templates versionados (README.md, .env.example) — tokens nunca
-├── data/                  # espelho local de MyDrive/tcc/data (ignorado pelo git)
-│   └── external/          # dados de referência versionados (ex.: malha IBGE)
-├── models/                # espelho local de MyDrive/tcc/models (ignorado pelo git)
-├── artifacts/             # espelho local de MyDrive/tcc/artifacts (ignorado pelo git)
-└── tcc-docs/              # submodulo git (tcc-docs) — material teórico, somente leitura
+├── AGENTS.md                 # regras de código, formatação e infraestrutura
+├── PLAN.md                   # roteiro de implementação
+├── pyproject.toml            # uv, ruff, mypy, pytest
+├── requirements-runtime.txt  # versões pinadas instaladas por notebook
+├── src/                      # pacote Python compartilhado
+├── tests/                    # pytest sobre src/
+├── notebooks/                # estágios .ipynb sequenciais
+├── scripts/                  # geradores de tokens OAuth (uso local)
+├── secrets/                  # apenas templates versionados
+├── data/                     # espelho git-ignored de MyDrive/tcc/data
+│   └── external/             # dados de referência versionados (ex.: IBGE)
+├── models/                   # espelho git-ignored de MyDrive/tcc/models
+├── artifacts/                # espelho git-ignored de MyDrive/tcc/artifacts
+└── tcc-docs/                 # submódulo git — material teórico (somente leitura)
 ```
 
-O **armazenamento canônico** de dados e artefatos não fica no repositório: tudo é gravado dentro da pasta **`tcc/` na raiz do Google Drive** (`MyDrive/tcc/`), acessada ou criada pelos próprios notebooks (junto com todas as subpastas de que precisarem). Nenhuma estrutura pré-criada é assumida:
+### Armazenamento canônico (Google Drive)
+
+Dados e artefatos **não** ficam no repositório. A raiz única de armazenamento
+é a pasta **`tcc/` na raiz do Google Drive** (`MyDrive/tcc/`), criada ou
+acessada pelos próprios notebooks, sem estrutura previamente assumida:
 
 ```bash
-MyDrive/tcc/                       # raiz de armazenamento (criada/acessada pelos notebooks)
+MyDrive/tcc/
 ├── data/{raw,interim,processed,external}/
-│   └── interim/{mapbiomas,alphaearth,emater,...}/   # ground truth por fonte (ano próprio)
-├── models/{unet,segformer}/{fonte}/          # + baselines históricos, ex.: emater_v1/
-├── artifacts/metrics|runs/{modelo}/{fonte}/  # + baselines, ex.: emater_v1/
-├── artifacts/metrics/{modelo}/{fonte}/evaluation/  # métricas, patches e predições do estágio 11
-├── artifacts/metrics/comparative/{fonte}/    # comparação estatística U-Net vs SegFormer do estágio 12
-├── artifacts/xai/gradcam/unet/{fonte}/       # mapas e metadata Grad-CAM do estágio 13
-├── artifacts/xai/attention_rollout/segformer/{fonte}/  # mapas e metadata Attention Rollout do estágio 14
-├── artifacts/synthesis/{fonte}/tables/      # tabelas CSV/LaTeX da síntese do estágio 15
-├── artifacts/release/{fonte}/               # auditoria dos repositórios/commits publicados no HF
-├── artifacts/figures/                        # + baselines, ex.: archive_v1/
-├── repo/src/                      # espelho do código-fonte (entrega do src/ ao runtime)
-├── secrets/                       # tokens OAuth persistidos — nunca versionar
-└── ...                            # qualquer subpasta necessária ao pipeline
+│   └── interim/{mapbiomas,alphaearth,emater,...}/   # ground truth por fonte
+├── models/{unet,segformer}/{fonte}/                 # pesos (+ baselines *_v1)
+├── artifacts/
+│   ├── metrics/{modelo}/{fonte}/                    # treino e avaliação
+│   ├── metrics/comparative/{fonte}/                 # comparação estatística
+│   ├── runs/{modelo}/{fonte}/                       # logs e metadata de execução
+│   ├── xai/gradcam/unet/{fonte}/                    # mapas Grad-CAM
+│   ├── xai/attention_rollout/segformer/{fonte}/     # mapas Attention Rollout
+│   ├── synthesis/{fonte}/                           # tabelas da síntese
+│   ├── release/{fonte}/                             # auditoria da publicação
+│   └── figures/                                     # figuras (+ archive_v1)
+├── repo/src/                                        # espelho do código-fonte
+├── secrets/                                         # tokens OAuth (nunca versionar)
+└── ...                                              # subpastas do pipeline
 ```
 
 ## Pré-requisitos
 
+### Ambiente de execução
+
 - Python com PyTorch e Hugging Face Transformers.
-- Conta no Google Earth Engine (autenticação OAuth com a conta principal via `ee.Authenticate()`).
-- Google Drive com a pasta `tcc/` na raiz — se já existir é reutilizada; se não existir, os notebooks a criam automaticamente.
-- Ambiente de execução com GPU (Google Colab ou Kaggle).
-- Para o Kaggle: tokens OAuth do Drive e do Earth Engine, gerados uma vez pelos scripts em `scripts/`. Para a publicação no Hugging Face Hub, `HF_TOKEN` (Kaggle Secrets ou variável de ambiente). Nenhum token é versionado (veja `secrets/README.md`).
+- GPU disponível — **Google Colab** ou **Kaggle** (obrigatório).
+- Conta no Google Earth Engine, autenticada por OAuth com a conta principal.
+
+### Armazenamento
+
+- Google Drive com a pasta `tcc/` na raiz.
+- Se a pasta já existir, ela é reutilizada; caso contrário, os notebooks a criam.
+
+### Credenciais
+
+- **Colab:** autenticação nativa com a conta logada.
+- **Kaggle:** tokens OAuth do Drive e do Earth Engine, gerados uma única vez
+  pelos scripts em `scripts/`.
+- **Hugging Face:** `HF_TOKEN` (Kaggle Secrets, dataset privado ou variável de
+  ambiente) para o estágio `16`.
+- Nenhum token é versionado. Detalhes em [`secrets/README.md`](secrets/README.md).
 
 ## Execução
 
-O projeto segue um layout híbrido: os notebooks Jupyter orquestram cada estágio, enquanto a lógica reutilizável reside no pacote `src/`. Os notebooks devem ser executados em ordem numérica e resolver todos os caminhos de entrada a partir de `src/config.py`.
+O projeto usa um **layout híbrido**: os notebooks orquestram e visualizam cada
+estágio, enquanto a lógica reutilizável reside em `src/`.
 
-Os notebooks são **agnósticos de plataforma**: o mesmo `.ipynb` executa no Google Colab ou no Kaggle e roda perfeitamente nas duas (mesmo protocolo: código, sementes, versões e processamento — não necessariamente saída bit-a-bit entre hardwares diferentes). A primeira célula de **cada** notebook baixa e executa `src/bootstrap.py` (somente stdlib) do repositório público: o bootstrap extrai `src/`, `data/external/` e `requirements-runtime.txt` para o workspace, adiciona-o ao `sys.path`, grava o SHA do commit em `src/.tcc_commit` e, no Colab, cria o espelho `MyDrive/tcc/repo/`; quando o espelho já existe, `src/io.py` (`sync_repo_to_workspace()`) o copia para o workspace — os notebooks geram a estrutura dentro de `tcc/`. Todo dado, arquivo, modelo, métrica, figura e log gerado é armazenado dentro da pasta **`tcc/` na raiz do Google Drive** (`MyDrive/tcc/`); os notebooks acessam essa pasta se já existir ou a criam — assim como todas as subpastas de que precisam — sem assumir estrutura preexistente. Detecção de ambiente, montagem do Drive e resolução de caminhos ficam centralizados em `src/` (ex.: `io.py`); no Colab o Drive é montado nativamente e no Kaggle é acessado via Drive API (token OAuth + cache local) — sempre pela mesma chamada única. Cada fonte de ground truth (MapBiomas, AlphaEarth, Emater, ...) tem sua própria célula de código, subpasta (`data/interim/<fonte>/`) e **conjunto próprio de patches e manifesto** (`manifest_<fonte>.parquet`). O sistema não elege fonte alguma: o estágio 03 compara todas as fontes e o estágio 04 registra a **decisão manual** do pesquisador (`ground_truth.chosen_source`), que seleciona apenas qual conjunto de patches será usado no treinamento.
+Os notebooks devem ser executados em **ordem numérica** e resolvem todos os
+caminhos a partir de `src/config.py` — nenhum caminho é hardcoded.
 
-O treinamento e o armazenamento de artefatos ocorrem no Google Drive (a partir do Colab ou do Kaggle); linting, verificação de tipos e testes são validados localmente pelo `.venv` e novamente no CI (GitHub Actions). Consulte o `AGENTS.md` para as regras operacionais completas.
+### Ordem dos estágios
 
-**Autenticação dentro dos notebooks:** todo processo de autenticação (GEE, Hugging Face, etc.) é executado nas próprias células de código dos notebooks, usando as bibliotecas/frameworks necessários (ex.: autenticação OAuth no GEE com `ee.Authenticate()`, usando a conta principal). As credenciais são lidas apenas de variáveis de ambiente — nunca commitadas, logadas ou expostas. Não há etapa de autenticação externa ou manual fora dos notebooks.
+| Fase | Notebooks | Entrega principal |
+| --- | --- | --- |
+| 0. Setup | `00` | ambiente, `src/` e raiz `tcc/` prontos |
+| 1. Aquisição | `01`–`02` | mosaicos Sentinel-2 e máscaras por fonte |
+| 2. Ground truth | `03`–`04` | comparação entre fontes e decisão manual |
+| 3. Dataset | `05`–`08` | composite, patches, split espacial e EDA |
+| 4. Treinamento | `09`–`10` | pesos da U-Net e do SegFormer |
+| 5. Avaliação | `11`–`12` | métricas por pixel e comparação estatística |
+| 6. XAI | `13`–`14` | mapas Grad-CAM e Attention Rollout |
+| 7. Síntese e disseminação | `15`–`16` | tabelas/figuras e publicação no HF Hub |
 
-Para garantir o mesmo protocolo de execução nas duas plataformas, a célula de dependências de cada notebook instala as versões fixadas de `requirements-runtime.txt` via `src.setup.install_runtime_requirements()` — que reinicia o kernel automaticamente quando uma extensão compilada já carregada diverge da versão pinada — e cada execução registra o ambiente completo (versões, sementes, hash de config/commit/manifest), com flags determinísticas do PyTorch habilitadas (`cudnn.deterministic`, `use_deterministic_algorithms`). O SegFormer (`10`/`11`) usa `warn_only=True` porque o upsampling bilinear não tem backward determinístico no CUDA no PyTorch; a configuração efetiva do treino é registrada em `run.meta.json`. O estágio 14 apenas executa forward, mantendo as flags estritas. Notebooks que carregam modelos do Transformers removem um `torchaudio` eventualmente incompatível (compilado para outra versão de CUDA), que impediria o import; o projeto não usa áudio. O `commit_sha` vem do git local ou de `src/.tcc_commit`, gravado pelo bootstrap. Os notebooks são versionados com outputs limpos e as convenções estruturais (nomenclatura, markdown sobre cada célula de código, outputs vazios) são validadas no CI. As operações de armazenamento são idempotentes: artefatos derivados são reutilizados apenas enquanto o fingerprint do dataset e o hash da configuração coincidem; quando mudam, são regenerados no lugar. Baselines históricos são preservados com sufixo `_v1` (ex.: `models/unet/emater_v1`, `data/processed/archive_v1`, `artifacts/figures/archive_v1`).
+### Portabilidade entre plataformas
+
+- O **mesmo `.ipynb`** executa no Colab e no Kaggle, com o mesmo protocolo
+  (código, sementes, versões e processamento).
+- Os resultados são tratados de forma idêntica — não se exige saída bit-a-bit
+  entre hardwares diferentes.
+- A primeira célula de cada notebook baixa e executa `src/bootstrap.py`, que:
+  - extrai `src/`, `data/external/` e `requirements-runtime.txt`;
+  - adiciona o workspace ao `sys.path`;
+  - grava o SHA do commit em `src/.tcc_commit`;
+  - no Colab, cria o espelho `MyDrive/tcc/repo/`.
+- Detecção de plataforma, montagem do Drive e resolução de caminhos ficam em
+  `src/io.py` — notebooks não usam APIs ou caminhos específicos.
+- No Colab o Drive é montado nativamente; no Kaggle o acesso é via Drive API
+  (token OAuth + cache local), pela mesma chamada única.
+
+### Autenticação
+
+- Toda autenticação ocorre **dentro das células dos notebooks** (GEE, Hugging
+  Face, Kaggle), com as bibliotecas correspondentes.
+- As credenciais são lidas apenas de variáveis de ambiente e nunca são
+  commitadas, logadas ou expostas.
+- Não há etapa de autenticação externa ou manual.
+
+### Dependências e determinismo
+
+- A célula de dependências instala as versões de `requirements-runtime.txt` via
+  `src.setup.install_runtime_requirements()`.
+- Se uma extensão compilada já carregada divergir da versão pinada, o kernel é
+  reiniciado automaticamente e o notebook reexecutado.
+- O ambiente completo é registrado por execução: versões, sementes, hash de
+  config, commit e fingerprint do manifesto.
+- O determinismo do PyTorch é habilitado (`cudnn.deterministic`,
+  `benchmark=False`, `use_deterministic_algorithms`).
+- Os estágios `10` e `11` usam `warn_only=True`, pois o upsampling bilinear não
+  tem backward determinístico no CUDA; a configuração efetiva fica em
+  `run.meta.json`.
+- Notebooks com Transformers removem um `torchaudio` incompatível quando
+  presente (o projeto não usa áudio).
+- Os notebooks são versionados com **outputs limpos**, e as convenções
+  estruturais são validadas no CI.
+
+### Idempotência e baselines
+
+- As operações de armazenamento são idempotentes e re-executáveis.
+- Artefatos derivados são reutilizados apenas enquanto o fingerprint do dataset
+  e o hash da configuração coincidem; quando mudam, são regenerados no lugar.
+- Baselines históricos são preservados com sufixo `_v1` e nunca sobrescritos
+  (ex.: `models/unet/emater_v1`, `data/processed/archive_v1`,
+  `artifacts/figures/archive_v1`).
+
+### Qualidade e CI
+
+- Linting, verificação de tipos e testes são validados localmente pelo `.venv`.
+- O CI (GitHub Actions) repete os mesmos gates no push.
+
+Regras operacionais completas: [`AGENTS.md`](AGENTS.md).
 
 ## Status
 
-Estágios `00`–`16` implementados e versionados: aquisição Sentinel-2 (GEE, mosaicos por ano da fonte), máscaras de referência por fonte (MapBiomas 2025 / AlphaEarth 2024 / Emater 2018), comparação entre fontes e registro da decisão manual (`04`), pré-processamento (composite por ano), geração de patches por fonte + manifesto com filtro de pixels válidos, divisão espacial k-fold (k=5) por fonte, EDA, treino do **U-Net** (`09`) e treino do **SegFormer** (`10`) na fonte escolhida (Emater 2018) com o protocolo único (`src/trainer.py`), ignorando pixels fora do AOI (rótulo `-1`) na perda e nas métricas, **avaliação por pixel** (`11`) dos dois modelos com IoU/F1/Precisão/Recall por patch, por dobra e agregados, além de predições binárias persistidas, **análise comparativa** (`12`) emparelhada por patch — diferença SegFormer − U-Net com IC bootstrap de 95%, teste t pareado, Wilcoxon com correção de Holm, d_z de Cohen, delta de Cliff, figura comparativa e mapas de erro TP/FP/FN/ignorado de patches representativos — **Grad-CAM da U-Net** (`13`) com os pesos de cada dobra, camada-alvo `encoders[-1]`, pontuação na região de referência de café, seleção determinística de patches representativos e persistência de mapas/metadata/figura em `artifacts/xai/gradcam/unet/<fonte>/` — e o **Attention Rollout do SegFormer** (`14`) na última etapa do codificador (atenção quadrada), com média das cabeças, conexões residuais, composição das camadas, relevância por token (sem CLS), reamostragem bilinear e persistência em `artifacts/xai/attention_rollout/segformer/<fonte>/` — e a **síntese dos resultados** (`15`), que consolida os artefatos dos estágios 06–14 em tabelas CSV/LaTeX (dataset, treino, avaliação, comparação e relevância de XAI) e figuras de curvas de treino, avaliação/comparação e relevância quantitativa dos mapas, sob `artifacts/synthesis/<fonte>/` e `artifacts/figures/` — e a **publicação no Hugging Face Hub** (`16`), que envia o dataset de patches (CC BY 4.0) e os pesos por dobra da U-Net e do SegFormer (MIT), com model cards, metadados de treino/avaliação e autenticação por `HF_TOKEN` no próprio notebook. O SegFormer usa `nvidia/mit-b1` por padrão: a primeira projeção é adaptada de 3 para 4 bandas (pesos RGB preservados; quarto canal = média dos três), o backbone ImageNet é mantido, a cabeça de segmentação é inicializada do zero e os logits de 1/4 de resolução são reamostrados bilinearmente para a entrada. O pacote `src/` cobre `config`, `io`/`bootstrap`/`setup`, `data/*`, `losses`, `metrics`, `evaluation`, `comparative`, `trainer`, `models/{unet,segformer}`, `xai/{common,gradcam,attention_rollout}`, `synthesis` e `release`, com `tests/` e CI (ruff, mypy, pytest e convenções de notebook). Todos os estágios planejados estão implementados. O primeiro treino do U-Net (dataset sem filtro e antes da correção de bbox/split espacial) está preservado como `emater_v1`, com metadados do dataset em `data/processed/archive_v1/` e figuras em `artifacts/figures/archive_v1/`; o `BASELINE.json` registra a limitação conhecida. Consulte o `PLAN.md`.
+Os estágios `00`–`16` estão implementados e versionados.
+
+### Dados
+
+- Aquisição Sentinel-2 no GEE, com mosaicos por ano da fonte.
+- Máscaras de referência por fonte (MapBiomas 2025, AlphaEarth 2024,
+  Emater 2018), comparação entre fontes e registro da decisão manual (`04`).
+- Pré-processamento, geração de patches com manifesto e split espacial k-fold
+  (k = 5) por fonte; EDA e estatísticas de normalização.
+
+### Modelos e avaliação
+
+- Treino da **U-Net** (`09`) e do **SegFormer** (`10`) na fonte escolhida
+  (Emater 2018), com o protocolo único de `src/trainer.py`.
+- **Avaliação por pixel** (`11`): IoU/F1/Precisão/Revocação por patch, por dobra
+  e agregados, com predições binárias persistidas.
+- **Análise comparativa** (`12`) emparelhada por patch: diferença
+  SegFormer − U-Net, IC bootstrap, teste t pareado, Wilcoxon com Holm,
+  tamanhos de efeito, figura comparativa e mapas de erro.
+
+### Explicabilidade
+
+- **Grad-CAM da U-Net** (`13`): pesos por dobra, camada-alvo `encoders[-1]`,
+  pontuação na região de referência de café e persistência em
+  `artifacts/xai/gradcam/unet/<fonte>/`.
+- **Attention Rollout do SegFormer** (`14`): última etapa do codificador,
+  média das cabeças, conexões residuais, composição das camadas e persistência
+  em `artifacts/xai/attention_rollout/segformer/<fonte>/`.
+
+### Síntese e publicação
+
+- **Síntese** (`15`): tabelas CSV/LaTeX e figuras de curvas de treino,
+  avaliação/comparação e relevância quantitativa dos mapas, em
+  `artifacts/synthesis/<fonte>/` e `artifacts/figures/`.
+- **Publicação** (`16`): dataset de patches (CC BY 4.0) e pesos por dobra da
+  U-Net e do SegFormer (MIT) no Hugging Face Hub, com model cards, metadados e
+  autenticação por `HF_TOKEN`.
+
+### Pacote e infraestrutura
+
+- `src/` cobre `config`, `io`/`bootstrap`/`setup`, `data/*`, `losses`,
+  `metrics`, `evaluation`, `comparative`, `trainer`, `models/*`,
+  `xai/*`, `synthesis` e `release`.
+- `tests/` e CI (ruff, mypy, pytest e convenções de notebook).
+- O primeiro treino da U-Net (dataset sem filtro e antes da correção de
+  bbox/split) está preservado como `emater_v1`, com metadados em
+  `data/processed/archive_v1/` e figuras em `artifacts/figures/archive_v1/`;
+  o `BASELINE.json` registra a limitação conhecida.
+
+Consulte o [`PLAN.md`](PLAN.md) para o detalhamento por estágio.
 
 ## Contribuição
 
-Siga as convenções definidas no `AGENTS.md`: layout híbrido notebook/pacote, identificadores em en-US, markdown dos notebooks em pt-BR e configuração reprodutível. Princípios de engenharia de software (DRY, responsabilidade única, KISS, YAGNI, separação de conceitos) se aplicam a todo o código — inclusive às células dos notebooks, que nunca duplicam a lógica já existente em `src/`. Credenciais nunca devem ser commitadas.
+- Siga as convenções de [`AGENTS.md`](AGENTS.md): layout híbrido
+  notebook/pacote, identificadores em en-US, markdown em pt-BR e configuração
+  reprodutível.
+- Aplique os princípios de engenharia de software (DRY, responsabilidade única,
+  KISS, YAGNI, separação de conceitos) a todo o código, incluindo as células
+  dos notebooks.
+- Notebooks nunca duplicam lógica já existente em `src/`.
+- Credenciais nunca devem ser commitadas.
 
 ## Licença
 
