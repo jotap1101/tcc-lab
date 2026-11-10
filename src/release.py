@@ -42,6 +42,16 @@ MODEL_ORDER = ("unet", "segformer")
 DATASET_LICENSE = "cc-by-4.0"
 MODEL_LICENSE = "mit"
 MODEL_LABELS = {"unet": "U-Net", "segformer": "SegFormer"}
+MODEL_BASE_RELATION = {"segformer": "finetune"}
+CITATION_KEY = "alves2026tcc"
+CITATION_AUTHOR = "João Pedro Alves"
+CITATION_TITLE = (
+    "Análise comparativa entre Redes Neurais Convolucionais (U-Net) e Vision "
+    "Transformers (SegFormer) na agricultura de precisão"
+)
+CITATION_SCHOOL = "IFSULDEMINAS — Bacharelado em Ciência da Computação"
+CITATION_YEAR = "2026"
+CITATION_URL = "https://github.com/jotap1101/tcc-lab"
 
 
 @dataclass(frozen=True)
@@ -226,6 +236,22 @@ def _markdown_table(headers: list[str], rows: list[list[Any]]) -> str:
     return "\n".join(lines)
 
 
+def _citation_section() -> str:
+    """Monta a seção `Citação` (BibTeX do TCC) incluída em todos os cards."""
+    entry = "\n".join(
+        [
+            f"@misc{{{CITATION_KEY},",
+            f"  author = {{{CITATION_AUTHOR}}},",
+            f"  title = {{{{{CITATION_TITLE}}}}},",
+            f"  howpublished = {{{CITATION_SCHOOL}}},",
+            f"  year = {{{CITATION_YEAR}}},",
+            f"  url = {{{CITATION_URL}}}",
+            "}",
+        ]
+    )
+    return f"## Citação\n\n```bibtex\n{entry}\n```\n"
+
+
 def _dataset_card(
     source_name: str,
     stats: dict[str, Any],
@@ -301,6 +327,7 @@ Pixels fora do AOI são NaN na imagem; o rótulo de treino correspondente deve s
 ignorado (o pipeline usa `-1`). Consulte `normalization_stats_{source_name}.json`
 para as estatísticas por banda.
 
+{_citation_section()}
 ## Licença
 
 Dados e documentação: **CC BY 4.0**. Código do pipeline: MIT.
@@ -334,10 +361,18 @@ def _model_card(
         ["fold", "patches", "IoU", "F1", "Precisão", "Recall"],
         fold_rows,
     )
+    # modelo derivado de backbone pré-treinado declara base_model no frontmatter do card
+    relation = MODEL_BASE_RELATION.get(model_name)
+    base_lines = (
+        f"base_model: {get_config()['model']['segformer_variant']}\n"
+        f"base_model_relation: {relation}\n"
+        if relation
+        else ""
+    )
     return f"""---
 license: {MODEL_LICENSE}
 library_name: pytorch
-tags:
+{base_lines}tags:
 - semantic-segmentation
 - coffee
 - sentinel-2
@@ -387,6 +422,7 @@ Os arrays de entrada seguem `normalization_stats_{source_name}.json` e a ordem
 de bandas do pipeline. Para o SegFormer, a primeira projeção aceita quatro
 bandas e a saída é reamostrada para a resolução da entrada.
 
+{_citation_section()}
 ## Licença
 
 Pesos e código: **MIT**.
