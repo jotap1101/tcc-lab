@@ -52,12 +52,19 @@ def rgb_composite(
     return rgb
 
 
-def render_figure(build_fn: Callable[[Any], Any]) -> bytes:
-    """Renderiza uma figura matplotlib como bytes PNG (backend Agg, sem display).
+def render_figure_formats(
+    build_fn: Callable[[Any], Any],
+    *,
+    dpi: int = 110,
+    formats: tuple[str, ...] = ("png",),
+) -> dict[str, bytes]:
+    """Renderiza uma figura matplotlib em um ou mais formatos (backend Agg).
 
     ``build_fn`` recebe o módulo ``matplotlib.pyplot`` e retorna a figura já
     montada (títulos, layout e legendas); a persistência em buffer e o
-    fechamento da figura são centralizados aqui.
+    fechamento da figura são centralizados aqui. Formatos vetoriais (``pdf``,
+    ``svg``) preservam o texto para impressão; ``png`` é o padrão dos estágios
+    operacionais e ``300`` dpi é usado nas figuras da monografia.
     """
     import matplotlib
 
@@ -65,7 +72,15 @@ def render_figure(build_fn: Callable[[Any], Any]) -> bytes:
     import matplotlib.pyplot as plt
 
     figure = build_fn(plt)
-    buffer = stdlib_io.BytesIO()
-    figure.savefig(buffer, format="png", dpi=110)
+    buffers: dict[str, bytes] = {}
+    for figure_format in formats:
+        buffer = stdlib_io.BytesIO()
+        figure.savefig(buffer, format=figure_format, dpi=dpi)
+        buffers[figure_format] = buffer.getvalue()
     plt.close(figure)
-    return buffer.getvalue()
+    return buffers
+
+
+def render_figure(build_fn: Callable[[Any], Any]) -> bytes:
+    """Renderiza uma figura matplotlib como bytes PNG (backend Agg, sem display)."""
+    return render_figure_formats(build_fn)["png"]

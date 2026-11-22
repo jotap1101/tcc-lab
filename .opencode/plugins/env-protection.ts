@@ -1,4 +1,4 @@
-import type { Plugin } from "@opencode-ai/plugin";
+import { Plugin } from "@opencode/plugin";
 
 // Padrões de arquivos de credenciais/segredos que nunca devem ser lidos pelo LLM.
 const BLOCKED_READ_PATTERNS: RegExp[] = [
@@ -12,12 +12,27 @@ const BLOCKED_READ_PATTERNS: RegExp[] = [
 // Exceções permitidas (ex.: template de variáveis sem valores reais).
 const ALLOWLIST: RegExp[] = [/(^|\/)\.env\.example$/];
 
-export const EnvProtection: Plugin = async () => {
-  return {
-    "tool.execute.before": async (input, output) => {
-      // Intercepta apenas a ferramenta de leitura de arquivos.
-      if (input.tool !== "read") return;
-      const filePath = (output.args as { filePath?: string } | undefined)
+export default Plugin.define({
+  id: "env-protection",
+  async setup(ctx) {
+    // DIAGNÓSTICO TEMPORÁRIO
+    const { writeFileSync } = await import("node:fs");
+    const tools = await ctx.tool.list();
+    writeFileSync(
+      "/tmp/opencode/plugin-tools.log",
+      tools.map((t) => t.id).sort().join("\n"),
+    );
+    // Intercepta cada execução de ferramenta antes que ela ocorra.
+    await ctx.tool.hook("execute.before", (event) => {
+      writeFileSync(
+        "/tmp/opencode/plugin-hook.log",
+        `${event.tool} ${JSON.stringify(event.input)}\n`,
+        { flag: "a" },
+      );
+      // Avalia apenas a ferramenta de leitura de arquivos.
+      if (event.tool !== "read") return;
+
+      const filePath = (event.input as { filePath?: string } | undefined)
         ?.filePath;
       if (!filePath) return;
 
@@ -28,6 +43,6 @@ export const EnvProtection: Plugin = async () => {
           "Leitura bloqueada: arquivo de credenciais/segredos. Acesse apenas via variáveis de ambiente.",
         );
       }
-    },
-  };
-};
+    });
+  },
+});

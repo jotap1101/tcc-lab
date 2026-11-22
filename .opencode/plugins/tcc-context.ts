@@ -1,4 +1,4 @@
-import type { Plugin } from "@opencode-ai/plugin";
+import { Plugin } from "@opencode/plugin";
 
 // Contexto científico e metodológico que deve sobreviver à compactação de sessão.
 const TCC_CONTEXT = [
@@ -22,11 +22,12 @@ const TCC_CONTEXT = [
   "  KISS, YAGNI e separação de conceitos — notebooks orquestram/visualizam, sem duplicar a lógica de src/.",
 ].join("\n");
 
-export const TccContext: Plugin = async () => {
-  return {
-    "experimental.session.compacting": async (_input, output) => {
-      // Injeta o contexto do projeto no prompt de continuação da compactação.
-      output.context.push(TCC_CONTEXT);
-    },
-  };
-};
+export default Plugin.define({
+  id: "tcc-context",
+  async setup(ctx) {
+    // Injeta o contexto do projeto nas instruções de sistema da compactação de sessão.
+    await ctx.session.hook("compaction", (event) => {
+      event.system.push({ type: "text", text: TCC_CONTEXT });
+    });
+  },
+});

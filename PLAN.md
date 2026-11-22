@@ -68,11 +68,12 @@ tcc/
 │   ├── evaluation.py
 │   ├── comparative.py
 │   ├── synthesis.py
+│   ├── monograph.py
 │   ├── trainer.py
 │   ├── models/{unet,segformer}.py
 │   └── xai/{common,gradcam,attention_rollout}.py
 ├── tests/                         # pytest somente sobre src/
-├── notebooks/                     # 17 arquivos .ipynb sequenciais
+├── notebooks/                     # 18 arquivos .ipynb sequenciais
 ├── scripts/                       # geradores de tokens OAuth (Drive, GEE) — uso local
 ├── secrets/                       # apenas templates versionados (README.md, .env.example)
 ├── data/{raw,interim,processed}/            # espelho git-ignored de MyDrive/tcc/data
@@ -112,7 +113,8 @@ GEE Sentinel-2 L2A (B2/B3/B4/B8) filtrado pelo AOI
   → comparação estatística                         [12]
   → Grad-CAM + Attention Rollout                   [13, 14]
   → figuras para a monografia                         [15]
-  → empacotamento + publicação                              [16]
+  → empacotamento + publicação                        [16]
+  → elementos visuais didáticos (metodologia/resultados) [17]
 ```
 
 ## 5. Fases e notebooks
@@ -138,6 +140,7 @@ Cada notebook é um estágio isolado com uma única responsabilidade e entradas/
 | `14_xai_attention_rollout_segformer.ipynb` | 6. XAI               | SegFormer → mapas Attention Rollout                                                                     |
 | `15_results_synthesis.ipynb`               | 7. Síntese           | tudo → figuras/tabelas para a monografia                                                                |
 | `16_export_release.ipynb`                  | 7. Disseminação      | patches+pesos → dataset + modelos no HF Hub                                                             |
+| `17_monograph_figures.ipynb`               | 8. Comunicação       | artefatos 03–15 → figuras e tabelas didáticas + legendas em `artifacts/monograph/<fonte>/`              |
 
 ## 6. Esquema de config e artefatos
 
@@ -152,7 +155,8 @@ Cada notebook é um estágio isolado com uma única responsabilidade e entradas/
 - **`loss`** — pesos de cada termo (Dice, Focal e Boundary).
 - **`augmentation`** — aumentações geométricas determinísticas reseedadas por época: `hflip_prob`, `vflip_prob` e `rot90_prob`.
 - **`training`** — `lr`, `epochs`, `batch_size`, `weight_decay` e `num_workers`.
-- **`storage`** — raiz `tcc/` do Drive e todas as subpastas (`data`, `models`, `artifacts`, `repo`, `secrets`, ...). Todos os caminhos são resolvidos daqui, nunca hardcoded.
+- **`storage`** — raiz `tcc/` do Drive e todas as subpastas (`data`, `models`, `artifacts`, `artifacts/monograph`, `repo`, `secrets`, ...). Todos os caminhos são resolvidos daqui, nunca hardcoded.
+- **`monograph`** — largura de texto ABNT das figuras (`figure_width_cm`), resolução de impressão (`dpi`) e formatos persistidos (`formats`: PDF vetorial e PNG).
 
 ### Manifesto
 
@@ -182,6 +186,7 @@ Todos ficam sob a raiz `tcc/` do Drive, com caminhos resolvidos de `config.yaml`
 | 14 | mapas e metadata Attention Rollout | `artifacts/xai/attention_rollout/segformer/<fonte>/{attention_rollout_maps.npz,attention_rollout_metadata.json}` |
 | 15 | tabelas e resumo da síntese | `artifacts/synthesis/<fonte>/{tables/*.csv,tables/*.tex,summary.json,synthesis_metadata.json}` |
 | 16 | auditoria da publicação | `artifacts/release/<fonte>/release.json` |
+| 17 | figuras, tabelas, legendas e inventário | `artifacts/monograph/<fonte>/{figures/*.{pdf,png},tables/*.{csv,tex},captions.{tex,md},inventory.json}` |
 
 As métricas de treino guardam `manifest_fingerprint_hash`, `split_fingerprint_hash` e `config_hash`.
 
@@ -192,7 +197,8 @@ Figuras ficam em `artifacts/figures/`:
 - `comparison_<região>_<ano>_<fonte>.png` e `error_maps_<região>_<ano>_<fonte>.png` — estágio 12;
 - `gradcam_unet_<região>_<ano>_<fonte>.png` — estágio 13;
 - `attention_rollout_segformer_<região>_<ano>_<fonte>.png` — estágio 14;
-- `synthesis_{training_curves,evaluation_overview,xai_relevance}_<região>_<ano>_<fonte>.png` — estágio 15.
+- `synthesis_{training_curves,evaluation_overview,xai_relevance}_<região>_<ano>_<fonte>.png` — estágio 15;
+- `artifacts/monograph/<fonte>/figures/*.{pdf,png}` e `tables/*.{csv,tex}` — estágio 17 (PDF vetorial e PNG de 300 dpi, mais `captions.tex`/`captions.md` e `inventory.json`).
 
 ### Baselines históricos
 
@@ -301,6 +307,14 @@ Baselines ficam em `models/{model}/{fonte}_v1/`, `artifacts/metrics|runs/{model}
   - publicação idempotente (fingerprint de dataset/pesos/configuração e verificação dos arquivos remotos);
   - auditoria em `artifacts/release/<fonte>/release.json`.
 
+### Fase 8 — Comunicação
+
+- [x] `17_monograph_figures.ipynb` — elementos visuais didáticos para os capítulos de metodologia e resultados:
+  - 16 figuras com uma única mensagem cada: localização da área, fluxo metodológico, bandas (natural vs falsa-cor), fontes de referência, anatomia do patch, dobras espaciais, arquiteturas, termos da perda, painel qualitativo, métricas agregadas e pareadas, distribuição por patch, consistência entre dobras, área em hectares, dificuldade por densidade de café, painel de XAI e cartão-síntese;
+  - 7 tabelas com cabeçalhos em pt-br, interpretação em linguagem comum e hectares: dataset, protocolo, glossário das métricas, desempenho, comparação pareada, área e relevância de XAI;
+  - PDF vetorial e PNG de 300 dpi em `artifacts/monograph/<fonte>/figures/`, tabelas em CSV (`;`) e LaTeX, legendas prontas (`captions.tex`/`captions.md`) e inventário com fingerprint;
+  - reutiliza as seleções determinísticas dos estágios 12–14 (mesmo talhão nas figuras qualitativas, nos mapas de erro e no XAI) e não retreina, não avalia e não recalcula métricas.
+
 ### Pacote compartilhado (`src/`) — construído junto das fases
 
 - [x] `config.py` + `config.yaml`
@@ -318,6 +332,7 @@ Baselines ficam em `models/{model}/{fonte}_v1/`, `artifacts/metrics|runs/{model}
 - [x] `evaluation.py` (inferência dos pesos por dobra, métricas por patch/dobra/agregadas, predições persistidas e figura — estágio 11)
 - [x] `comparative.py` (comparação estatística emparelhada U-Net vs SegFormer, figura comparativa e mapas de erro — estágio 12)
 - [x] `synthesis.py` (tabelas CSV/LaTeX e figuras de síntese para a monografia — estágio 15)
+- [x] `monograph.py` (figuras e tabelas didáticas com legendas prontas — estágio 17)
 - [x] `release.py` (empacotamento e publicação do dataset e dos modelos no Hugging Face Hub — estágio 16)
 - [x] `trainer.py` (protocolo de treino único, parametrizado pelo modelo — sem duplicação entre notebooks 09/10)
 - [x] `models/unet.py`
@@ -376,6 +391,7 @@ Baselines ficam em `models/{model}/{fonte}_v1/`, `artifacts/metrics|runs/{model}
 ### Síntese e publicação
 
 - **Síntese (estágio 15):** lê apenas artefatos vigentes (não retreina nem reavalia) e consolida tabelas em CSV e LaTeX e figuras para a monografia. O fingerprint cobre manifestos, resumos do estágio 11, digests das métricas/históricos de treino, comparação do estágio 12 e metadados/mapas de XAI; qualquer mudança regenera a síntese. A relevância de XAI é quantificada pela média do mapa normalizado dentro e fora da região de referência de café, por patch explicado.
+- **Comunicação (estágio 17):** reescreve os artefatos técnicos em figuras e tabelas para leitores não técnicos. Cada figura tem um título em forma de conclusão, valores anotados e paleta segura para daltonismo; a área de café é apresentada em hectares na amostra de validação (não como estimativa regional); a seleção de talhões reaproveita os critérios determinísticos dos estágios 12–14, evitando exemplos diferentes entre capítulos. O fingerprint cobre manifesto, split, resumos do estágio 11, comparação do estágio 12 e metadados/mapas de XAI.
 - **Publicação (estágio 16):** o dataset e os pesos são empacotados em um staging temporário (hardlink quando possível, cópia como fallback), sem duplicar artefatos no Drive, e enviados ao Hugging Face Hub com `upload_folder`. O `HF_TOKEN` é lido apenas de env/Secrets e autenticado no notebook. Os IDs dos repositórios derivam da conta e da fonte, com sobrescrita por `HF_DATASET_REPO`, `HF_UNET_REPO` e `HF_SEGFORMER_REPO`. A reutilização exige fingerprint de manifesto, split, pesos e configuração, além da presença dos arquivos remotos esperados; o `release.json` registra repos, commits e métricas.
 
 ### Infraestrutura e rastreabilidade

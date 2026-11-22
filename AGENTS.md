@@ -138,7 +138,7 @@ Use the available MCP servers actively for repository inspection, architectural 
 
 ## Status
 
-All planned stages `00`–`16` are implemented and versioned.
+All planned stages `00`–`17` are implemented and versioned.
 
 ### Data pipeline
 
@@ -174,6 +174,7 @@ All planned stages `00`–`16` are implemented and versioned.
 
 - **Results synthesis (`15`):** consolidates the stage 06–14 artifacts into CSV/LaTeX tables (dataset by source, training, per-fold and aggregate evaluation, paired comparison, XAI relevance inside/outside the coffee reference) and summary figures (training curves, evaluation/comparison overview, quantitative XAI relevance). Persisted under `artifacts/synthesis/<source>/` and `artifacts/figures/` with an input fingerprint (no retraining or re-evaluation).
 - **Dissemination (`16`):** publishes the chosen-source dataset (patches, masks, relabeled manifest and normalization stats; CC BY 4.0) and the per-fold U-Net and SegFormer weights (MIT) to the Hugging Face Hub, with dataset/model cards, `model_config.json`, in-notebook `HF_TOKEN` authentication, configurable repository IDs, idempotent uploads and audit metadata under `artifacts/release/<source>/`.
+- **Monograph visuals (`17`):** renders the didactic figures and tables of the methodology and results chapters for a non-technical committee — one message per figure, pt-br titles and captions, hectares and percentages, the same representative patches reused from stages 12–14 — as PDF (vector) and 300 dpi PNG plus ready-to-use `captions.tex`/`captions.md`, tables in CSV (`;`) and LaTeX, and an inventory with the input fingerprint under `artifacts/monograph/<source>/`. It reads the stage 03–15 artifacts only: no training, inference or metric recomputation.
 
 ### SegFormer adaptation
 
@@ -186,7 +187,7 @@ The SegFormer (`nvidia/mit-b1` by default) follows these rules:
 
 ### Package, quality and baselines
 
-- The shared package covers config, io/bootstrap/setup, data/*, losses, metrics, evaluation, comparative, trainer, models/{unet,segformer}, xai/{common,gradcam,attention_rollout}, synthesis and release.
+- The shared package covers config, io/bootstrap/setup, data/*, losses, metrics, evaluation, comparative, trainer, models/{unet,segformer}, xai/{common,gradcam,attention_rollout}, synthesis, monograph and release.
 - `tests/` and CI (ruff, mypy, pytest, notebook conventions) back the package.
 - The first U-Net run (pre-filter dataset and pre-fix bbox/spatial split) is preserved as `emater_v1` (weights/metrics/history), with dataset metadata in `data/processed/archive_v1` and figures in `artifacts/figures/archive_v1`; its `BASELINE.json` records the known bbox/split issue.
 - See `PLAN.md` for the stage-by-stage roadmap.
