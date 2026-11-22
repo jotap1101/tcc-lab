@@ -402,3 +402,15 @@ def test_render_xai_relevance_returns_png(tmp_path, monkeypatch) -> None:
     png = synthesis.render_xai_relevance(table)
 
     assert png.startswith(b"\x89PNG")
+
+
+def test_validate_inputs_reports_fingerprint_divergence(tmp_path, monkeypatch) -> None:
+    """A validação deve apontar qual campo do fingerprint divergiu (ex.: config_hash)."""
+    paths = _write_environment(tmp_path, monkeypatch)
+    summary_file = evaluation.evaluation_summary_path(paths, "unet", TEST_SOURCE)
+    summary = json.loads(summary_file.read_text(encoding="utf-8"))
+    summary["fingerprint"]["config_hash"] = "alterado"
+    _write_json(summary_file, summary)
+
+    with pytest.raises(ValueError, match="config_hash"):
+        synthesis.validate_inputs(paths, TEST_SOURCE)

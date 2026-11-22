@@ -163,6 +163,29 @@ def _xai_is_current(metadata: dict[str, Any], summary: dict[str, Any], model_nam
     return True
 
 
+def fingerprint_differences(
+    storage_paths: dict[str, Path],
+    source_name: str,
+    summaries: dict[str, dict[str, Any]],
+) -> dict[str, dict[str, list[Any]]]:
+    """Compara o fingerprint gravado no estágio 11 com o vigente, por modelo.
+
+    Ajuda a diagnosticar artefatos desatualizados: identifica se a divergência
+    está no hash da configuração, no fingerprint do manifesto/split ou no limiar,
+    em vez de exigir a reexecução cega de toda a cadeia.
+    """
+    expected = evaluation.summary_fingerprint(storage_paths, source_name)
+    report: dict[str, dict[str, list[Any]]] = {}
+    for model_name in MODEL_ORDER:
+        stored = (summaries.get(model_name) or {}).get("fingerprint", {})
+        report[model_name] = {
+            key: [stored.get(key), expected.get(key)]
+            for key in expected
+            if stored.get(key) != expected.get(key)
+        }
+    return report
+
+
 def validate_inputs(
     storage_paths: dict[str, Path], source_name: str | None = None
 ) -> tuple[str, dict[str, dict[str, Any]], dict[str, Any], list[str]]:
@@ -179,9 +202,15 @@ def validate_inputs(
     require_manifest(storage_paths, source)
     summaries = comparative.load_evaluation_summaries(storage_paths, source)
     if not comparative.summaries_are_current(storage_paths, source, summaries):
+        differences = fingerprint_differences(storage_paths, source, summaries)
+        detail = (
+            f"Campos divergentes: {differences}"
+            if any(differences.values())
+            else "Fingerprints iguais; faltam artefatos por dobra (métricas ou predições)."
+        )
         raise ValueError(
             "Artefatos do estágio 11 desatualizados ou incompletos; "
-            "reexecute a avaliação antes da síntese."
+            f"reexecute a avaliação antes da síntese. {detail}"
         )
     comparison_file = comparative.comparison_path(storage_paths, source)
     if not io.path_exists(comparison_file):

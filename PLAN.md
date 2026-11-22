@@ -155,8 +155,7 @@ Cada notebook é um estágio isolado com uma única responsabilidade e entradas/
 - **`loss`** — pesos de cada termo (Dice, Focal e Boundary).
 - **`augmentation`** — aumentações geométricas determinísticas reseedadas por época: `hflip_prob`, `vflip_prob` e `rot90_prob`.
 - **`training`** — `lr`, `epochs`, `batch_size`, `weight_decay` e `num_workers`.
-- **`storage`** — raiz `tcc/` do Drive e todas as subpastas (`data`, `models`, `artifacts`, `artifacts/monograph`, `repo`, `secrets`, ...). Todos os caminhos são resolvidos daqui, nunca hardcoded.
-- **`monograph`** — largura de texto ABNT das figuras (`figure_width_cm`), resolução de impressão (`dpi`) e formatos persistidos (`formats`: PDF vetorial e PNG).
+- **`storage`** — raiz `tcc/` do Drive e todas as subpastas (`data`, `models`, `artifacts`, `repo`, `secrets`, ...). Todos os caminhos são resolvidos daqui, nunca hardcoded; o diretório `artifacts/monograph/` é derivado de `artifacts/` quando não declarado.
 
 ### Manifesto
 
@@ -391,7 +390,7 @@ Baselines ficam em `models/{model}/{fonte}_v1/`, `artifacts/metrics|runs/{model}
 ### Síntese e publicação
 
 - **Síntese (estágio 15):** lê apenas artefatos vigentes (não retreina nem reavalia) e consolida tabelas em CSV e LaTeX e figuras para a monografia. O fingerprint cobre manifestos, resumos do estágio 11, digests das métricas/históricos de treino, comparação do estágio 12 e metadados/mapas de XAI; qualquer mudança regenera a síntese. A relevância de XAI é quantificada pela média do mapa normalizado dentro e fora da região de referência de café, por patch explicado.
-- **Comunicação (estágio 17):** reescreve os artefatos técnicos em figuras e tabelas para leitores não técnicos. Cada figura tem um título em forma de conclusão, valores anotados e paleta segura para daltonismo; a área de café é apresentada em hectares na amostra de validação (não como estimativa regional); a seleção de talhões reaproveita os critérios determinísticos dos estágios 12–14, evitando exemplos diferentes entre capítulos. O fingerprint cobre manifesto, split, resumos do estágio 11, comparação do estágio 12 e metadados/mapas de XAI.
+- **Comunicação (estágio 17):** reescreve os artefatos técnicos em figuras e tabelas para leitores não técnicos. Os parâmetros editoriais (largura ABNT de 16 cm, 300 dpi, PDF+PNG) são constantes em `src/monograph.py`, e não chaves de `config.yaml`: o hash do arquivo de configuração é o fingerprint dos artefatos de treino/avaliação, então qualquer acréscimo ali invalidaria os estágios 09–15. Cada figura tem um título em forma de conclusão, valores anotados e paleta segura para daltonismo; a área de café é apresentada em hectares na amostra de validação (não como estimativa regional); a seleção de talhões reaproveita os critérios determinísticos dos estágios 12–14, evitando exemplos diferentes entre capítulos. O fingerprint cobre manifesto, split, resumos do estágio 11, comparação do estágio 12 e metadados/mapas de XAI.
 - **Publicação (estágio 16):** o dataset e os pesos são empacotados em um staging temporário (hardlink quando possível, cópia como fallback), sem duplicar artefatos no Drive, e enviados ao Hugging Face Hub com `upload_folder`. O `HF_TOKEN` é lido apenas de env/Secrets e autenticado no notebook. Os IDs dos repositórios derivam da conta e da fonte, com sobrescrita por `HF_DATASET_REPO`, `HF_UNET_REPO` e `HF_SEGFORMER_REPO`. A reutilização exige fingerprint de manifesto, split, pesos e configuração, além da presença dos arquivos remotos esperados; o `release.json` registra repos, commits e métricas.
 
 ### Infraestrutura e rastreabilidade

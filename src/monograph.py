@@ -54,6 +54,13 @@ FOLD_COLORS = ("#0072b2", "#e69f00", "#009e73", "#cc79a7", "#56b4e9")
 METRIC_LABELS = {"iou": "IoU", "f1": "F1", "precision": "Precisão", "recall": "Recall"}
 SOURCE_LABELS = {"mapbiomas": "MapBiomas", "alphaearth": "AlphaEarth", "emater": "Emater"}
 
+# Parâmetros editoriais das figuras. Ficam no módulo (e não em config.yaml)
+# porque o hash do config.yaml é o fingerprint dos artefatos de treino e
+# avaliação: acrescentar chaves de apresentação invalidaria os estágios 09–15.
+FIGURE_WIDTH_CM = 16.0  # largura da área de texto da página ABNT
+FIGURE_DPI = 300
+FIGURE_FORMATS = ("png", "pdf")
+
 
 # ---------------------------------------------------------------------------
 # Catálogo de figuras e tabelas (a ordem define a numeração das legendas)
@@ -2058,11 +2065,10 @@ def run_monograph(
         comparison=comparison,
         xai_models=xai_models,
     )
-    config = data.config
     context = RenderContext(
-        width_cm=float(config["monograph"]["figure_width_cm"]),
-        dpi=int(config["monograph"]["dpi"]),
-        formats=tuple(str(fmt) for fmt in config["monograph"]["formats"]),
+        width_cm=FIGURE_WIDTH_CM,
+        dpi=FIGURE_DPI,
+        formats=FIGURE_FORMATS,
     )
     figures = available_figures(data)
     tables = available_tables(data)
