@@ -36,7 +36,7 @@ from src.data.source_decision import chosen_source
 from src.data.spatial_split import fold_count, split_fingerprint_hash
 from src.xai import common
 
-MONOGRAPH_SCHEMA_VERSION = 1
+MONOGRAPH_SCHEMA_VERSION = 2
 MODEL_ORDER = synthesis.MODEL_ORDER
 MODEL_LABELS = synthesis.MODEL_LABELS
 MODEL_COLORS = synthesis.MODEL_COLORS
@@ -1050,74 +1050,104 @@ def render_pipeline(data: MonographData, context: RenderContext) -> dict[str, by
     """Diagrama vertical do fluxo metodológico, com o protocolo único destacado."""
     from matplotlib.patches import FancyArrowPatch, FancyBboxPatch
 
-    def _box(axis: Any, text: str, center_x: float, center_y: float, width: float) -> None:
-        box = FancyBboxPatch(
-            (center_x - width / 2, center_y - 0.42),
-            width,
-            0.84,
-            boxstyle="round,pad=0.02,rounding_size=0.08",
-            facecolor="#eceff1",
-            edgecolor="#455a64",
-            linewidth=0.9,
+    def _box(
+        axis: Any,
+        text: str,
+        center_x: float,
+        center_y: float,
+        width: float = 6.4,
+        height: float = 0.78,
+    ) -> None:
+        axis.add_patch(
+            FancyBboxPatch(
+                (center_x - width / 2, center_y - height / 2),
+                width,
+                height,
+                boxstyle="round,pad=0.015,rounding_size=0.08",
+                facecolor="#eceff1",
+                edgecolor="#455a64",
+                linewidth=0.9,
+                zorder=2,
+            )
         )
-        axis.add_patch(box)
-        axis.text(center_x, center_y, text, ha="center", va="center", fontsize=8.5)
+        axis.text(center_x, center_y, text, ha="center", va="center", fontsize=8.5, zorder=3)
 
     def _arrow(axis: Any, start: tuple[float, float], end: tuple[float, float]) -> None:
         axis.add_patch(
             FancyArrowPatch(
-                start, end, arrowstyle="-|>", mutation_scale=12, color="#455a64", linewidth=1.1
+                start,
+                end,
+                arrowstyle="-|>",
+                mutation_scale=12,
+                color="#455a64",
+                linewidth=1.1,
+                shrinkA=0,
+                shrinkB=0,
+                zorder=4,
             )
         )
 
     def _build(plt: Any, figure: Any) -> None:
         axis = figure.add_subplot()
         axis.set_xlim(0, 10)
-        axis.set_ylim(0, 7.2)
+        axis.set_ylim(0, 7.3)
         axis.set_axis_off()
 
-        centers = (6.40, 5.30, 4.20)
-        texts = (
-            "Sentinel-2 (bandas B2, B3, B4 e B8, 10 m)",
-            "Máscaras de referência\n(MapBiomas, AlphaEarth e Emater)",
-            "Patches de 512 × 512 px\ne divisão espacial em 5 dobras",
-        )
-        for center, text in zip(centers, texts, strict=True):
-            _box(axis, text, 5.0, center, 6.2)
-        for first, second in zip(centers[:-1], centers[1:], strict=True):
-            _arrow(axis, (5.0, first - 0.42), (5.0, second + 0.42))
-
+        # Faixa do protocolo compartilhado: preenchimento sem contorno evita
+        # que as setas de entrada/saída cruzem traços do retângulo tracejado.
         axis.add_patch(
             FancyBboxPatch(
-                (1.7, 2.05),
+                (1.7, 2.12),
                 6.6,
-                1.40,
-                boxstyle="round,pad=0.02,rounding_size=0.06",
-                facecolor="none",
-                edgecolor="#1565c0",
-                linestyle="--",
-                linewidth=1.0,
+                1.5,
+                boxstyle="round,pad=0.02,rounding_size=0.08",
+                facecolor="#e3f2fd",
+                edgecolor="none",
+                zorder=0,
             )
         )
         axis.text(
-            1.85,
-            2.12,
-            "Mesmo protocolo:\nperda, otimizador,\nsementes e dobras",
-            ha="left",
-            va="bottom",
-            fontsize=6.8,
+            5.0,
+            3.55,
+            "Mesmo protocolo",
+            ha="center",
+            va="center",
+            fontsize=7.0,
             color="#1565c0",
+            zorder=3,
         )
-        _box(axis, "Treino U-Net\n(CNN)", 3.35, 2.95, 2.85)
-        _box(axis, "Treino SegFormer\n(Transformer)", 6.65, 2.95, 2.85)
-        _arrow(axis, (5.0, 3.78), (3.35, 3.37))
-        _arrow(axis, (5.0, 3.78), (6.65, 3.37))
+        axis.text(
+            5.0,
+            3.42,
+            "perda, otimizador, sementes e dobras",
+            ha="center",
+            va="center",
+            fontsize=6.0,
+            color="#1565c0",
+            zorder=3,
+        )
 
-        _box(axis, "Avaliação por pixel\n(IoU, F1, precisão e recall)", 5.0, 1.45, 6.2)
-        _arrow(axis, (3.35, 2.53), (5.0, 1.87))
-        _arrow(axis, (6.65, 2.53), (5.0, 1.87))
-        _box(axis, "Explicabilidade (Grad-CAM e Attention Rollout)", 5.0, 0.42, 6.2)
-        _arrow(axis, (5.0, 1.03), (5.0, 0.84))
+        _box(axis, "Sentinel-2 (bandas B2, B3, B4 e B8, 10 m)", 5.0, 6.55)
+        _box(axis, "Máscaras de referência\n(MapBiomas, AlphaEarth e Emater)", 5.0, 5.45)
+        _box(axis, "Patches de 512 × 512 px\ne divisão espacial em 5 dobras", 5.0, 4.35)
+        _arrow(axis, (5.0, 6.16), (5.0, 5.84))
+        _arrow(axis, (5.0, 5.06), (5.0, 4.74))
+
+        _box(axis, "Treino U-Net\n(CNN)", 3.35, 2.9, width=2.7)
+        _box(axis, "Treino SegFormer\n(Transformer)", 6.65, 2.9, width=2.7)
+        # Entradas verticais, fora do bloco de texto do protocolo compartilhado.
+        _arrow(axis, (3.35, 3.96), (3.35, 3.29))
+        _arrow(axis, (6.65, 3.96), (6.65, 3.29))
+
+        # Barramento de saída dos dois treinos em direção à avaliação.
+        axis.plot([3.35, 6.65], [2.25, 2.25], color="#455a64", linewidth=1.1, zorder=2)
+        axis.plot([3.35, 3.35], [2.51, 2.25], color="#455a64", linewidth=1.1, zorder=2)
+        axis.plot([6.65, 6.65], [2.51, 2.25], color="#455a64", linewidth=1.1, zorder=2)
+        _arrow(axis, (5.0, 2.25), (5.0, 1.99))
+
+        _box(axis, "Avaliação por pixel\n(IoU, F1, precisão e recall)", 5.0, 1.6)
+        _arrow(axis, (5.0, 1.21), (5.0, 0.89))
+        _box(axis, "Explicabilidade (Grad-CAM e Attention Rollout)", 5.0, 0.5)
 
     return _render(_build, context, height_cm=12.0)
 
@@ -1228,6 +1258,44 @@ def render_patch_anatomy(data: MonographData, context: RenderContext) -> dict[st
     return _render(_build, context, height_cm=7.2)
 
 
+def _patch_rectangles_km(
+    manifest: pd.DataFrame, patch_size: int, pixel_m: float
+) -> list[tuple[int, float, float, float, float]]:
+    """Retângulos (dobra, x, y, largura, altura) dos patches, em km.
+
+    Usa a bbox geográfica do manifesto (EPSG:31983), garantindo posições reais
+    no território. Quando a bbox não está disponível, reconstrói o quadrado a
+    partir dos índices `row`/`col` do grid de patches.
+    """
+    side_km = patch_size * pixel_m / 1000.0
+    has_bbox = "bbox" in manifest.columns and bool(manifest["bbox"].notna().all())
+    rectangles: list[tuple[int, float, float, float, float]] = []
+    for record in manifest.itertuples(index=False):
+        fold = int(record.fold)
+        if has_bbox:
+            min_x, min_y, max_x, max_y = (float(value) for value in str(record.bbox).split(","))
+            rectangles.append(
+                (
+                    fold,
+                    min_x / 1000.0,
+                    min_y / 1000.0,
+                    (max_x - min_x) / 1000.0,
+                    (max_y - min_y) / 1000.0,
+                )
+            )
+        else:
+            rectangles.append(
+                (
+                    fold,
+                    float(record.col) * side_km,
+                    float(record.row) * side_km,
+                    side_km,
+                    side_km,
+                )
+            )
+    return rectangles
+
+
 def render_spatial_folds(data: MonographData, context: RenderContext) -> dict[str, bytes]:
     """Desenha os patches no território, coloridos pela dobra de validação."""
     from matplotlib.patches import Patch, Rectangle
@@ -1235,29 +1303,38 @@ def render_spatial_folds(data: MonographData, context: RenderContext) -> dict[st
     manifest = data.manifest
     patch_size = int(data.config["data"]["patch_size"])
     pixel_m = float(data.config["data"]["export"]["scale"])
-    side_km = patch_size * pixel_m / 1000.0
     folds = sorted(int(fold) for fold in manifest["fold"].unique())
+    rectangles = _patch_rectangles_km(manifest, patch_size, pixel_m)
+    if not rectangles:
+        raise ValueError("Manifesto sem patches para a figura da divisão espacial.")
+
+    x_min = min(x for _, x, _, _, _ in rectangles)
+    y_min = min(y for _, _, y, _, _ in rectangles)
+    x_max = max(x + width for _, x, _, width, _ in rectangles)
+    y_max = max(y + height for _, _, y, _, height in rectangles)
+    # Margem explícita: o matplotlib 3.11 não amplia os limites ao adicionar patches.
+    margin_x = max((x_max - x_min) * 0.02, 0.5)
+    margin_y = max((y_max - y_min) * 0.02, 0.5)
 
     def _build(plt: Any, figure: Any) -> None:
         axis = figure.add_subplot()
-        for fold in folds:
-            color = FOLD_COLORS[fold % len(FOLD_COLORS)]
-            subset = manifest[manifest["fold"] == fold]
-            for row in subset.itertuples(index=False):
-                axis.add_patch(
-                    Rectangle(
-                        (float(row.col) * side_km, float(row.row) * side_km),
-                        side_km,
-                        side_km,
-                        facecolor=color,
-                        edgecolor="none",
-                        alpha=0.85,
-                    )
+        for fold, x, y, width, height in rectangles:
+            axis.add_patch(
+                Rectangle(
+                    (x - x_min, y - y_min),
+                    width,
+                    height,
+                    facecolor=FOLD_COLORS[fold % len(FOLD_COLORS)],
+                    edgecolor="white",
+                    linewidth=0.3,
+                    alpha=0.9,
                 )
+            )
+        axis.set_xlim(-margin_x, (x_max - x_min) + margin_x)
+        axis.set_ylim(-margin_y, (y_max - y_min) + margin_y)
         axis.set_aspect("equal")
-        axis.invert_yaxis()
         axis.set_xlabel("distância (km, oeste → leste)")
-        axis.set_ylabel("distância (km, norte → sul)")
+        axis.set_ylabel("distância (km, sul → norte)")
         axis.set_title("Cada quadrado é um patch; cores diferentes são dobras diferentes")
         handles = [
             Patch(
@@ -1269,91 +1346,118 @@ def render_spatial_folds(data: MonographData, context: RenderContext) -> dict[st
         axis.legend(
             handles=handles,
             loc="upper center",
-            bbox_to_anchor=(0.5, -0.18),
+            bbox_to_anchor=(0.5, -0.16),
             ncol=3,
             frameon=False,
         )
         axis.grid(alpha=0.2)
 
-    return _render(_build, context, height_cm=8.5)
+    return _render(_build, context, height_cm=10.5)
 
 
 def render_architectures(data: MonographData, context: RenderContext) -> dict[str, bytes]:
     """Esquema conceitual das duas arquiteturas, com a mesma linguagem visual."""
     from matplotlib.patches import FancyArrowPatch, FancyBboxPatch
 
-    def _block(axis: Any, x: float, y: float, width: float, height: float, text: str) -> None:
+    def _block(
+        axis: Any,
+        x: float,
+        y: float,
+        width: float,
+        height: float,
+        text: str = "",
+        fontsize: float = 7.5,
+    ) -> None:
         axis.add_patch(
             FancyBboxPatch(
                 (x - width / 2, y - height / 2),
                 width,
                 height,
-                boxstyle="round,pad=0.02,rounding_size=0.06",
+                boxstyle="round,pad=0.015,rounding_size=0.05",
                 facecolor="#eceff1",
                 edgecolor="#455a64",
                 linewidth=0.8,
+                zorder=2,
             )
         )
-        axis.text(x, y, text, ha="center", va="center", fontsize=7.5)
+        if text:
+            axis.text(x, y, text, ha="center", va="center", fontsize=fontsize, zorder=3)
 
     def _arrow(axis: Any, start: tuple[float, float], end: tuple[float, float]) -> None:
         axis.add_patch(
             FancyArrowPatch(
-                start, end, arrowstyle="-|>", mutation_scale=9, color="#455a64", linewidth=0.9
+                start,
+                end,
+                arrowstyle="-|>",
+                mutation_scale=9,
+                color="#455a64",
+                linewidth=0.9,
+                shrinkA=0,
+                shrinkB=0,
+                zorder=1,
             )
         )
 
     def _build(plt: Any, figure: Any) -> None:
         axes = figure.subplots(1, 2)
         for axis in axes:
-            axis.set_xlim(0, 8.2)
-            axis.set_ylim(0, 5.6)
+            axis.set_xlim(0, 8.4)
+            axis.set_ylim(0, 5.4)
             axis.set_axis_off()
 
-        axes[0].set_title("U-Net: convoluções (vizinhança local)")
-        heights = (2.4, 1.9, 1.4, 0.9)
-        for index, height in enumerate(heights):
-            _block(axes[0], 0.9 + 0.9 * index, 2.6, 0.75, height, "")
-            _block(axes[0], 7.1 - 0.9 * index, 2.6, 0.75, height, "")
-            _arrow(
-                axes[0],
-                (0.9 + 0.9 * index, 2.6 + height / 2),
-                (7.1 - 0.9 * index, 2.6 + heights[index] / 2),
-            )
-        _block(axes[0], 4.0, 2.6, 1.1, 0.7, "fundo")
-        for index in range(len(heights) - 1):
-            _arrow(axes[0], (0.9 + 0.9 * index + 0.4, 2.6), (0.9 + 0.9 * (index + 1) - 0.4, 2.6))
-            _arrow(axes[0], (7.1 - 0.9 * index - 0.4, 2.6), (7.1 - 0.9 * (index + 1) + 0.4, 2.6))
-        axes[0].text(0.9, 0.7, "codificador", fontsize=8, ha="left")
-        axes[0].text(7.1, 0.7, "decodificador", fontsize=8, ha="right")
-        axes[0].text(
-            4.0, 0.3, "as setas horizontais são as conexões de salto", fontsize=7.5, ha="center"
+        # U-Net: pilha do codificador desce, gargalo ao centro, decodificador sobe.
+        unet = axes[0]
+        unet.set_title("U-Net: convoluções (vizinhança local)", fontsize=10)
+        encoder_x, decoder_x = 1.15, 7.05
+        levels = (4.15, 3.45, 2.75, 2.05)
+        for level in levels:
+            _block(unet, encoder_x, level, 0.62, 0.42)
+            _block(unet, decoder_x, level, 0.62, 0.42)
+        _block(unet, 4.1, 1.35, 1.5, 0.5, "gargalo", fontsize=7.5)
+        for upper, lower in zip(levels[:-1], levels[1:], strict=True):
+            _arrow(unet, (encoder_x, upper - 0.21), (encoder_x, lower + 0.21))
+        _arrow(unet, (encoder_x, levels[-1] - 0.21), (4.1 - 0.75, 1.35))
+        _arrow(unet, (4.1 + 0.75, 1.35), (decoder_x, levels[-1] - 0.21))
+        for lower, upper in zip(levels[::-1][:-1], levels[::-1][1:], strict=True):
+            _arrow(unet, (decoder_x, lower + 0.21), (decoder_x, upper - 0.21))
+        # Conexões de salto: setas longas apenas no espaço vazio entre as pilhas.
+        for level in levels:
+            _arrow(unet, (encoder_x + 0.31, level), (decoder_x - 0.31, level))
+        unet.text(encoder_x, 0.9, "codificador", ha="center", fontsize=8)
+        unet.text(decoder_x, 0.9, "decodificador", ha="center", fontsize=8)
+        unet.text(
+            4.1,
+            0.35,
+            "as setas horizontais são as conexões de salto",
+            ha="center",
+            fontsize=7.5,
         )
 
-        axes[1].set_title("SegFormer: atenção (cena inteira)")
-        for index in range(4):
-            _block(axes[1], 0.9 + 0.95 * index, 2.9, 0.8, 1.8, str(index + 1))
-            if index:
-                _arrow(
-                    axes[1], (0.9 + 0.95 * (index - 1) + 0.4, 2.9), (0.9 + 0.95 * index - 0.4, 2.9)
-                )
-        _block(axes[1], 5.1, 2.9, 1.3, 1.1, "cabeça\nMLP")
-        _arrow(axes[1], (4.15, 2.9), (4.45, 2.9))
-        _block(axes[1], 6.75, 2.9, 1.6, 1.1, "logits\n1/4 → entrada")
-        _arrow(axes[1], (5.75, 2.9), (5.95, 2.9))
-        axes[1].text(
-            2.5,
-            0.85,
+        # SegFormer: quatro estágios, cabeça MLP e logits com espaço próprio.
+        segformer = axes[1]
+        segformer.set_title("SegFormer: atenção (cena inteira)", fontsize=10)
+        stages = (0.85, 1.75, 2.65, 3.55)
+        for index, x in enumerate(stages, start=1):
+            _block(segformer, x, 3.0, 0.62, 1.5, str(index), fontsize=8)
+            if index > 1:
+                _arrow(segformer, (stages[index - 2] + 0.31, 3.0), (x - 0.31, 3.0))
+        _block(segformer, 4.8, 3.0, 1.25, 0.95, "cabeça\nMLP", fontsize=7.2)
+        _arrow(segformer, (3.86, 3.0), (4.175, 3.0))
+        _block(segformer, 7.0, 3.0, 1.8, 0.95, "logits\n1/4 → entrada", fontsize=6.4)
+        _arrow(segformer, (5.425, 3.0), (6.1, 3.0))
+        segformer.text(
+            2.35,
+            1.6,
             "codificador (resolução 1/4 → 1/32)",
-            fontsize=7.5,
             ha="center",
+            fontsize=7.5,
         )
-        axes[1].text(
-            4.0,
-            0.25,
+        segformer.text(
+            4.2,
+            0.75,
             "cada token enxerga a cena inteira desde a primeira etapa",
-            fontsize=7.5,
             ha="center",
+            fontsize=7.5,
         )
 
     return _render(_build, context, height_cm=6.5)
