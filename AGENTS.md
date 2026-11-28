@@ -4,7 +4,7 @@ System instruction and operating manual for all AI-assisted development in this 
 
 ## Project Overview
 
-Research project (deep learning / computer vision) on **semantic segmentation of coffee crops** for precision agriculture. The study performs a **comparative analysis between Convolutional Neural Networks (U-Net) and Vision Transformers (SegFormer)**.
+Research project (deep learning / computer vision) on **semantic segmentation of coffee crops** for precision agriculture. The study performs a **comparative analysis between Convolutional Neural Networks (U-Net) and Transformers (SegFormer)**.
 
 - **Territorial focus:** Região Geográfica Imediata de Guaxupé – MG, Brazil.
 - **Language:** Python (with PyTorch and Hugging Face Transformers).
@@ -17,9 +17,10 @@ Research project (deep learning / computer vision) on **semantic segmentation of
 - **Preprocessing:** split orbital spectral data into **512x512 px patches**.
 - **Loss function:** multivariate loss combining **Dice Loss + Focal Loss + Boundary Loss**.
 - **Validation:** spatial **k-fold (k=5)** with pixel-level metrics: **IoU, F1-Score, Precision, Recall**.
+- **Statistical inference:** patches are not independent; report spatial-block and fold-level inference as primary and keep per-patch tests as descriptive only.
 - **Explainability (XAI):**
   - U-Net (native CNN): **Grad-CAM** maps.
-  - SegFormer (ViT): **Attention Rollout** for contextual inference.
+  - SegFormer (Transformer): **Attention Rollout** for contextual inference.
 
 ## Licensing (dual)
 
@@ -138,56 +139,41 @@ Use the available MCP servers actively for repository inspection, architectural 
 
 ## Status
 
-All planned stages `00`–`17` are implemented and versioned.
+All planned stages `00`–`17` are implemented and versioned. Stage-by-stage details live in `PLAN.md`; reproduction steps in `docs/REPRODUCIBILITY.md`; methodological decisions and known limitations in `docs/DECISIONS.md`.
 
 ### Data pipeline
 
-- **Acquisition (`01`):** Sentinel-2 mosaics via GEE, one per source year.
-- **Reference masks (`02`):** per-source masks for MapBiomas 2025, AlphaEarth 2024 and Emater 2018.
-- **Source comparison and decision (`03`–`04`):** multi-source diagnostic plus the manual decision record.
-- **Preprocessing and dataset (`05`–`08`):** composite per year, per-source patch generation with manifest (patches below `data.min_valid_fraction` valid pixels are discarded), spatial k-fold split (k=5) per source and EDA.
-- **Ignore label:** pixels outside the AOI carry `-1` and are excluded from loss and metrics.
+- **Acquisition (`01`) and reference masks (`02`):** Sentinel-2 mosaics via GEE per source year; per-source masks for MapBiomas 2025, AlphaEarth 2024 and Emater 2018.
+- **Source comparison and decision (`03`–`04`):** multi-source diagnostic plus the manual decision record (`ground_truth.chosen_source`, currently `emater`).
+- **Preprocessing and dataset (`05`–`08`):** composite per year, per-source 512×512 patches with manifest (patches below `data.min_valid_fraction` valid pixels are discarded), spatial k-fold split (k=5) and EDA. Pixels outside the AOI carry `-1` and are excluded from loss and metrics.
 
-### Training and evaluation
+### Training, evaluation and statistics
 
-- **Training (`09`–`10`):** U-Net and SegFormer on the chosen source, both with the single protocol from `src/trainer.py` (same loss, optimizer, scheduler, seeds, folds and metrics).
-- **Evaluation (`11`):** pixel-level IoU/F1/Precision/Recall per patch, per fold and aggregated, persisting binary predictions and per-patch metrics.
-- **Paired comparison (`12`):** SegFormer − U-Net differences, bootstrap confidence intervals, paired t-test, Wilcoxon signed-rank test with Holm correction, effect sizes, per-fold deltas, comparative figure and TP/FP/FN/ignored error maps of representative patches.
+- **Training (`09`–`10`):** single protocol from `src/trainer.py` (same loss, Adam + cosine schedule, seeds, folds, metrics). U-Net is trained from scratch; SegFormer (`nvidia/mit-b1`) uses a pretrained encoder with the first projection adapted from 3 to 4 bands and a head initialized from scratch. This asymmetry is a documented limitation (`docs/DECISIONS.md`, D5).
+- **Evaluation (`11`):** pixel-level metrics per patch/fold/aggregate, binary predictions and per-patch probability histograms (`EVALUATION_SCHEMA_VERSION = 2`).
+- **Comparison (`12`):** per-patch tests are **descriptive** (patches are spatially dependent); the primary inference uses spatial blocks and folds (`src/spatial_inference.py`), plus threshold sensitivity (`src/thresholds.py`: average precision and leave-one-fold-out calibrated threshold). `COMPARATIVE_SCHEMA_VERSION = 2`.
 
 ### Explainability
 
-- **U-Net Grad-CAM (`13`):**
-  - per-fold weights and deepest encoder (`encoders[-1]`) as target layer;
-  - score over the reference coffee region;
-  - deterministic representative patch selection;
-  - bilinear upsampling to input resolution;
-  - maps/metadata/figure under `artifacts/xai/gradcam/unet/<source>/`;
-  - GPU when available, CPU fallback.
-- **SegFormer Attention Rollout (`14`):**
-  - per-fold weights and the last hierarchical encoder stage (square attention, 1:1 spatial reduction);
-  - mean head aggregation, residual connections, row normalization and layer composition;
-  - without a CLS token, token relevance is the mean of rollout rows, upsampled bilinearly to input resolution;
-  - maps/metadata/fingerprint/figure under `artifacts/xai/attention_rollout/segformer/<source>/`;
-  - attention extracted with `output_attentions=True` in `eager` mode, forward only, GPU when available, CPU fallback.
+- **Grad-CAM (`13`):** deepest encoder (`encoders[-1]`), score over the reference coffee region, min-max normalization restricted to valid pixels.
+- **Attention Rollout (`14`):** last hierarchical stage (square attention), mean heads, residual connections, row normalization, layer composition; query tokens weighted by the predicted coffee probability (valid pixels only) to avoid attention-sink accumulation. Attention is extracted with `output_attentions=True` in `eager` mode.
+- Known limits: few explained patches, gradient- and attention-based maps are not directly comparable, no fidelity evaluation.
 
-### Synthesis and dissemination
+### Synthesis, dissemination and communication
 
-- **Results synthesis (`15`):** consolidates the stage 06–14 artifacts into CSV/LaTeX tables (dataset by source, training, per-fold and aggregate evaluation, paired comparison, XAI relevance inside/outside the coffee reference) and summary figures (training curves, evaluation/comparison overview, quantitative XAI relevance). Persisted under `artifacts/synthesis/<source>/` and `artifacts/figures/` with an input fingerprint (no retraining or re-evaluation).
-- **Dissemination (`16`):** publishes the chosen-source dataset (patches, masks, relabeled manifest and normalization stats; CC BY 4.0) and the per-fold U-Net and SegFormer weights (MIT) to the Hugging Face Hub, with dataset/model cards, `model_config.json`, in-notebook `HF_TOKEN` authentication, configurable repository IDs, idempotent uploads and audit metadata under `artifacts/release/<source>/`.
-- **Monograph visuals (`17`):** renders the didactic figures and tables of the methodology and results chapters for a non-technical committee — one message per figure, pt-br titles and captions, hectares and percentages, the same representative patches reused from stages 12–14 — as PDF (vector) and 300 dpi PNG plus ready-to-use `captions.tex`/`captions.md`, tables in CSV (`;`) and LaTeX, and an inventory with the input fingerprint under `artifacts/monograph/<source>/`. It reads the stage 03–15 artifacts only: no training, inference or metric recomputation.
+- **Synthesis (`15`):** CSV/LaTeX tables (including spatial inference, threshold sensitivity and epoch-selection optimism) and summary figures, with an input fingerprint (no retraining or re-evaluation).
+- **Dissemination (`16`):** chosen-source dataset (CC BY 4.0) and per-fold U-Net/SegFormer weights (MIT) published to the Hugging Face Hub with cards, audit metadata and idempotent uploads.
+- **Monograph visuals (`17`):** 18 figures and up to 8 tables with captions (`captions.tex`/`captions.md`) for the monograph, paper and slides, reading stage 03–15 artifacts only.
 
-### SegFormer adaptation
+### Figures
 
-The SegFormer (`nvidia/mit-b1` by default) follows these rules:
-
-- adapts the first projection from 3 to 4 bands — RGB weights preserved and the fourth channel initialized as the mean of the three;
-- keeps the ImageNet backbone;
-- initializes the segmentation head from scratch;
-- upsamples the 1/4-resolution logits bilinearly to the input size.
+- Every figure uses `src/figstyle.py`: final print size (16 cm width, 8–10 pt fonts), colorblind-safe palette, **PNG at 300 dpi and vector PDF** side by side. Renderers return `dict[str, bytes]`; `figstyle.persist_figure` writes all formats next to the canonical PNG.
+- Presentation parameters live in `src/figstyle.py`, never in `config.yaml` (the config hash is the training/evaluation fingerprint).
+- Figures are derived artifacts: save functions regenerate them on every run.
 
 ### Package, quality and baselines
 
-- The shared package covers config, io/bootstrap/setup, data/*, losses, metrics, evaluation, comparative, trainer, models/{unet,segformer}, xai/{common,gradcam,attention_rollout}, synthesis, monograph and release.
+- The shared package covers config, io/bootstrap/setup, data/*, losses, metrics, evaluation, thresholds, spatial_inference, comparative, trainer, models/{unet,segformer}, xai/{common,gradcam,attention_rollout}, synthesis, monograph, release and figstyle.
 - `tests/` and CI (ruff, mypy, pytest, notebook conventions) back the package.
-- The first U-Net run (pre-filter dataset and pre-fix bbox/spatial split) is preserved as `emater_v1` (weights/metrics/history), with dataset metadata in `data/processed/archive_v1` and figures in `artifacts/figures/archive_v1`; its `BASELINE.json` records the known bbox/split issue.
-- See `PLAN.md` for the stage-by-stage roadmap.
+- The first U-Net run (pre-filter dataset and pre-fix bbox/spatial split) is preserved as `emater_v1`, with dataset metadata in `data/processed/archive_v1` and figures in `artifacts/figures/archive_v1`; its `BASELINE.json` records the known bbox/split issue.
+- Bumping a stage's schema version (`EVALUATION_`, `COMPARATIVE_`, `GRADCAM_`, `ATTENTION_ROLLOUT_`, `SYNTHESIS_`, `MONOGRAPH_SCHEMA_VERSION`) invalidates its artifacts and those downstream; stages must then be rerun in order (see `docs/REPRODUCIBILITY.md`, section 7).

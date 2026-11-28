@@ -57,9 +57,11 @@ All figure renderers use `src/figstyle.py` (final print size in cm, PNG 300 dpi 
 
 ### Downstream modules
 
-`src/evaluation.py` (11) → `src/comparative.py` (12, paired stats) → `src/xai/{gradcam,attention_rollout,common}.py` (13–14) → `src/synthesis.py` (15) → `src/release.py` (16, HF Hub) → `src/monograph.py` (17, read-only rendering of earlier artifacts; editorial parameters live in the module, not in `config.yaml`). Each notebook stage maps to one of these modules plus `src/data/*` for stages 01–08; `tests/test_<module>.py` mirrors each module.
+`src/evaluation.py` (11, also per-patch probability histograms) → `src/comparative.py` (12; per-patch tests descriptive, primary inference in `src/spatial_inference.py`, threshold analysis in `src/thresholds.py`) → `src/xai/{gradcam,attention_rollout,common}.py` (13–14) → `src/synthesis.py` (15) → `src/release.py` (16, HF Hub) → `src/monograph.py` (17, read-only rendering of earlier artifacts; editorial parameters live in `src/figstyle.py`, not in `config.yaml`). Each notebook stage maps to one of these modules plus `src/data/*` for stages 01–08; `tests/test_<module>.py` mirrors each module.
 
 ## Repo notes
+
+- Docs: `README.md` (overview, status, reference results), `PLAN.md` (per-stage roadmap), `AGENTS.md` (rules), `docs/REPRODUCIBILITY.md` (step-by-step, invalidation matrix, troubleshooting), `docs/DECISIONS.md` (decisions and limitations). Keep them aligned when behavior, schema versions or artifacts change.
 
 - `tcc-docs/` is a read-only git submodule.
 - `.opencode/` holds the OpenCode agents/commands and the notebook checker used by CI (`.opencode/tools/scripts/check_notebook.py`).

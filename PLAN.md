@@ -1,6 +1,6 @@
 # PLAN.md — Roteiro de Implementação
 
-Roteiro definitivo de execução para o estudo comparativo **U-Net (CNN) vs SegFormer (ViT)** em **segmentação semântica de lavouras cafeeiras** (Guaxupé – MG, Brasil) usando imagens Sentinel-2 Nível-2A.
+Roteiro definitivo de execução para o estudo comparativo **U-Net (CNN) vs SegFormer (Transformer)** em **segmentação semântica de lavouras cafeeiras** (Guaxupé – MG, Brasil) usando imagens Sentinel-2 Nível-2A.
 
 > `AGENTS.md` é a fonte única de verdade para regras de codificação, formatação, idioma e infraestrutura. Todo artefato descrito aqui deve estar em conformidade com ele.
 
@@ -65,13 +65,17 @@ tcc/
 │   ├── data/{augmentations,dataset,eda,gee_client,mask_comparison,mask_utils,patch_generation,preprocessing,raster_utils,source_decision,spatial_split}.py
 │   ├── losses.py
 │   ├── metrics.py
+│   ├── figstyle.py               # estilo e saída das figuras (16 cm, PNG 300 dpi + PDF)
 │   ├── evaluation.py
+│   ├── thresholds.py             # AP, limiar calibrado (histogramas de probabilidade)
+│   ├── spatial_inference.py      # inferência por blocos espaciais e por dobras
 │   ├── comparative.py
 │   ├── synthesis.py
 │   ├── monograph.py
 │   ├── trainer.py
 │   ├── models/{unet,segformer}.py
 │   └── xai/{common,gradcam,attention_rollout}.py
+├── docs/                          # REPRODUCIBILITY.md (passo a passo) e DECISIONS.md (decisões e limitações)
 ├── tests/                         # pytest somente sobre src/
 ├── notebooks/                     # 18 arquivos .ipynb sequenciais
 ├── scripts/                       # geradores de tokens OAuth (Drive, GEE) — uso local
@@ -134,8 +138,8 @@ Cada notebook é um estágio isolado com uma única responsabilidade e entradas/
 | `08_dataset_eda.ipynb`                     | 3. Dataset           | manifesto por fonte → estatísticas de normalização + verificações de sanidade por fonte |
 | `09_train_unet.ipynb`                      | 4. Treinamento       | dataset filtrado da fonte escolhida → pesos do U-Net + métricas/histórico por dobra (retreino por fingerprint) |
 | `10_train_segformer.ipynb`                 | 4. Treinamento       | dataset filtrado da fonte escolhida → pesos do SegFormer + métricas/histórico por dobra (protocolo único, retreino por fingerprint) |
-| `11_evaluation.ipynb`                      | 5. Avaliação         | pesos por dobra → predições persistidas + IoU/F1/P/R em nível de pixel (por patch, por dobra e agregado) |
-| `12_comparative_analysis.ipynb`            | 5. Avaliação         | métricas → comparação estatística + mapas de erro                                                       |
+| `11_evaluation.ipynb`                      | 5. Avaliação         | pesos por dobra → predições e histogramas de probabilidade persistidos + IoU/F1/P/R em nível de pixel (por patch, por dobra e agregado) |
+| `12_comparative_analysis.ipynb`            | 5. Avaliação         | métricas e histogramas → comparação (patches, blocos espaciais, dobras), sensibilidade ao limiar + mapas de erro |
 | `13_xai_gradcam_unet.ipynb`                | 6. XAI               | U-Net → mapas de calor Grad-CAM                                                                         |
 | `14_xai_attention_rollout_segformer.ipynb` | 6. XAI               | SegFormer → mapas Attention Rollout                                                                     |
 | `15_results_synthesis.ipynb`               | 7. Síntese           | tudo → figuras/tabelas para a monografia                                                                |
@@ -184,7 +188,7 @@ Todos ficam sob a raiz `tcc/` do Drive, com caminhos resolvidos de `config.yaml`
 | 12 | comparação estatística: testes por patch (descritivos), inferência por blocos espaciais e dobras, sensibilidade ao limiar (AP, limiar calibrado leave-one-fold-out) | `artifacts/metrics/comparative/<fonte>/comparison.json` |
 | 13 | mapas e metadata Grad-CAM | `artifacts/xai/gradcam/unet/<fonte>/{gradcam_maps.npz,gradcam_metadata.json}` |
 | 14 | mapas e metadata Attention Rollout | `artifacts/xai/attention_rollout/segformer/<fonte>/{attention_rollout_maps.npz,attention_rollout_metadata.json}` |
-| 15 | tabelas e resumo da síntese | `artifacts/synthesis/<fonte>/{tables/*.csv,tables/*.tex,summary.json,synthesis_metadata.json}` |
+| 15 | tabelas (inclui `inference_spatial` e `threshold_sensitivity`) e resumo da síntese | `artifacts/synthesis/<fonte>/{tables/*.csv,tables/*.tex,summary.json,synthesis_metadata.json}` |
 | 16 | auditoria da publicação | `artifacts/release/<fonte>/release.json` |
 | 17 | figuras, tabelas, legendas e inventário | `artifacts/monograph/<fonte>/{figures/*.{pdf,png},tables/*.{csv,tex},captions.{tex,md},inventory.json}` |
 
@@ -199,6 +203,8 @@ Figuras ficam em `artifacts/figures/`:
 - `gradcam_unet_<região>_<ano>_<fonte>.png` — estágio 13;
 - `attention_rollout_segformer_<região>_<ano>_<fonte>.png` — estágio 14;
 - `synthesis_{training_curves,evaluation_overview,xai_relevance}_<região>_<ano>_<fonte>.png` — estágio 15;
+- `evaluation_<região>_<ano>_<fonte>_<modelo>.png` — estágio 11; `split_kfold_*`, `eda_*` e `mask_sources_comparison_*` — estágios 07, 08 e 03;
+- cada figura tem também o `.pdf` vetorial com o mesmo nome;
 - `artifacts/monograph/<fonte>/figures/*.{pdf,png}` e `tables/*.{csv,tex}` — estágio 17 (PDF vetorial e PNG de 300 dpi, mais `captions.tex`/`captions.md` e `inventory.json`).
 
 ### Baselines históricos
@@ -264,14 +270,16 @@ Baselines ficam em `models/{model}/{fonte}_v1/`, `artifacts/metrics|runs/{model}
 ### Fase 5 — Avaliação
 
 - [x] `11_evaluation.ipynb` — inferência dos pesos por dobra (estágios 09/10) sobre a validação espacial:
-  - IoU/F1/Precisão/Recall em nível de pixel (por patch, por dobra e agregado micro), ignorando `-1`;
-  - persiste `evaluation/{fold_{i}.json,summary.json,patch_metrics_fold_{i}.parquet,predictions_fold_{i}.npz}` por modelo/fonte e figura de resumo;
-  - reutiliza artefatos apenas quando manifesto, split, config e hash dos pesos coincidem.
-- [x] `12_comparative_analysis.ipynb` — comparação estatística emparelhada por patch entre U-Net e SegFormer:
-  - diferença SegFormer − U-Net, IC bootstrap de 95%, teste t pareado;
-  - Wilcoxon, correção de Holm para as quatro métricas, d_z de Cohen e delta de Cliff;
-  - resultado em `artifacts/metrics/comparative/<fonte>/comparison.json`;
-  - figura comparativa e mapas de erro (TP/FP/FN/ignorado) de patches representativos em `artifacts/figures/`;
+  - IoU/F1/Precisão/Revocação em nível de pixel (por patch, por dobra e agregado micro), ignorando `-1`;
+  - persiste `evaluation/{fold_{i}.json,summary.json,patch_metrics_fold_{i}.parquet,predictions_fold_{i}.npz,probability_histograms_fold_{i}.npz}` por modelo/fonte e figura de resumo (PNG + PDF);
+  - os histogramas de probabilidade (256 bins, por patch, café e não-café) permitem a análise de limiar do estágio 12 sem nova inferência;
+  - `EVALUATION_SCHEMA_VERSION = 2`; reutiliza artefatos apenas quando manifesto, split, config, hash dos pesos e esquema coincidem.
+- [x] `12_comparative_analysis.ipynb` — comparação estatística entre U-Net e SegFormer:
+  - diferença SegFormer − U-Net; por patch (IC bootstrap, t pareado, Wilcoxon com Holm, d_z de Cohen, delta de Cliff), **descritivo** porque os patches não são independentes;
+  - inferência principal por blocos espaciais (3×3 patches; bootstrap de blocos e inversão de sinais, com Holm) e por dobras (IC t, n = 5), em `src/spatial_inference.py`;
+  - sensibilidade ao limiar (`src/thresholds.py`): precisão média (AP) e limiar calibrado leave-one-fold-out por modelo;
+  - resultado em `artifacts/metrics/comparative/<fonte>/comparison.json` (`COMPARATIVE_SCHEMA_VERSION = 2`);
+  - figuras comparativa, de inferência (floresta de ICs), de limiar e mapas de erro (TP/FP/FN/ignorado), em PNG + PDF;
   - reutiliza a análise apenas quando os fingerprints e os pesos do estágio 11 coincidem.
 
 ### Fase 6 — XAI
@@ -280,24 +288,24 @@ Baselines ficam em `models/{model}/{fonte}_v1/`, `artifacts/metrics|runs/{model}
   - pesos da dobra de cada patch (estágio 09) e resumo vigente do estágio 11;
   - camada-alvo no codificador mais profundo (`encoders[-1]`);
   - pontuação pela soma dos logits da classe café na região de referência do patch;
-  - mapa reamostrado bilinearmente para a resolução de entrada;
+  - mapa reamostrado bilinearmente; normalização min-max **apenas sobre pixels válidos**, com zero fora do AOI (`GRADCAM_SCHEMA_VERSION = 2`);
   - patches representativos escolhidos deterministicamente (maior/menor IoU, maior proporção de café e IoU mediano);
-  - mapas e metadata em `artifacts/xai/gradcam/unet/<fonte>/` e figura em `artifacts/figures/`;
+  - mapas e metadata em `artifacts/xai/gradcam/unet/<fonte>/` e figura (PNG + PDF) em `artifacts/figures/`;
   - reutiliza apenas quando resumo do estágio 11, pesos das dobras e configuração coincidem.
 - [x] `14_xai_attention_rollout_segformer.ipynb` — Attention Rollout do SegFormer na fonte escolhida:
   - pesos da dobra de cada patch (estágio 10) e resumo vigente do estágio 11;
   - rollout na última etapa do codificador hierárquico (atenção quadrada, redução espacial 1:1);
   - média das cabeças, conexões residuais (`+ I`), normalização das linhas e composição das camadas;
-  - sem token CLS, a relevância de cada token é a média das linhas do rollout;
-  - mesmos critérios determinísticos de seleção de patches do estágio 13;
-  - mapa reamostrado bilinearmente, persistido em `artifacts/xai/attention_rollout/segformer/<fonte>/` e visualizado em `artifacts/figures/`;
+  - sem token CLS, a relevância é a média das linhas **ponderada pela probabilidade predita de café** (restrita aos pixels válidos), o que evita o acúmulo em *attention sinks* (`ATTENTION_ROLLOUT_SCHEMA_VERSION = 2`);
+  - normalização apenas sobre pixels válidos; mesmos critérios determinísticos de seleção do estágio 13;
+  - mapa persistido em `artifacts/xai/attention_rollout/segformer/<fonte>/` e figura (PNG + PDF);
   - atenção extraída em modo `eager`, apenas forward (GPU quando disponível, CPU como fallback);
   - reutiliza apenas quando resumo do estágio 11, pesos das dobras e configuração coincidem.
 
 ### Fase 7 — Síntese e Disseminação
 
 - [x] `15_results_synthesis.ipynb` — síntese dos resultados da fonte escolhida a partir dos artefatos dos estágios 06–14:
-  - tabelas CSV e LaTeX para dataset por fonte, treinamento por modelo/dobra, avaliação por dobra e agregada, comparação estatística emparelhada e relevância de XAI dentro/fora da referência de café;
+  - tabelas CSV e LaTeX para dataset por fonte, treinamento por modelo/dobra (com o IoU da época final e o viés de seleção de época), avaliação por dobra e agregada, comparação emparelhada, inferência espacial, sensibilidade ao limiar e relevância de XAI dentro/fora da referência de café;
   - figuras de curvas de treino, visão geral da avaliação/comparação e relevância quantitativa do Grad-CAM e do Attention Rollout;
   - persistência em `artifacts/synthesis/<fonte>/` (tabelas e resumo) e `artifacts/figures/` (figuras), com fingerprint das entradas;
   - não retreina nem reavalia.
@@ -311,8 +319,8 @@ Baselines ficam em `models/{model}/{fonte}_v1/`, `artifacts/metrics|runs/{model}
 ### Fase 8 — Comunicação
 
 - [x] `17_monograph_figures.ipynb` — elementos visuais didáticos para os capítulos de metodologia e resultados:
-  - 16 figuras com uma única mensagem cada: localização da área, fluxo metodológico, bandas (natural vs falsa-cor), fontes de referência, anatomia do patch, dobras espaciais, arquiteturas, termos da perda, painel qualitativo, métricas agregadas e pareadas, distribuição por patch, consistência entre dobras, área em hectares, dificuldade por densidade de café, painel de XAI e cartão-síntese;
-  - 7 tabelas com cabeçalhos em pt-br, interpretação em linguagem comum e hectares: dataset, protocolo, glossário das métricas, desempenho, comparação pareada, área e relevância de XAI;
+  - 18 figuras com uma única mensagem cada: localização da área, fluxo metodológico, bandas (natural vs falsa-cor), fontes de referência, anatomia do patch, dobras espaciais, arquiteturas, termos da perda, painel qualitativo, métricas agregadas e pareadas, incerteza por unidade de análise, sensibilidade ao limiar, distribuição por patch, consistência entre dobras, área em hectares, dificuldade por densidade de café, painel de XAI e cartão-síntese;
+  - até 8 tabelas com cabeçalhos em pt-br, interpretação em linguagem comum e hectares: dataset, protocolo (inclui inicialização dos modelos e seleção de época), glossário das métricas, desempenho, comparação pareada (ICs por blocos e dobras), sensibilidade ao limiar, área e relevância de XAI;
   - PDF vetorial e PNG de 300 dpi em `artifacts/monograph/<fonte>/figures/`, tabelas em CSV (`;`) e LaTeX, legendas prontas (`captions.tex`/`captions.md`) e inventário com fingerprint;
   - reutiliza as seleções determinísticas dos estágios 12–14 (mesmo talhão nas figuras qualitativas, nos mapas de erro e no XAI) e não retreina, não avalia e não recalcula métricas.
 
@@ -330,8 +338,11 @@ Baselines ficam em `models/{model}/{fonte}_v1/`, `artifacts/metrics|runs/{model}
 - [x] `data/emater_masks.py` (máscara vetorial da Emater — estágio 02)
 - [x] `losses.py` (Dice + Focal + Boundary, com pesos de config.yaml; ignora pixels com rótulo `-1`)
 - [x] `metrics.py` (IoU, F1, Precision, Recall com acumulador por época; ignora pixels com rótulo `-1`)
-- [x] `evaluation.py` (inferência dos pesos por dobra, métricas por patch/dobra/agregadas, predições persistidas e figura — estágio 11)
-- [x] `comparative.py` (comparação estatística emparelhada U-Net vs SegFormer, figura comparativa e mapas de erro — estágio 12)
+- [x] `figstyle.py` (estilo, dimensões em cm, PNG 300 dpi + PDF e paleta compartilhados por todas as figuras)
+- [x] `evaluation.py` (inferência dos pesos por dobra, métricas por patch/dobra/agregadas, predições e histogramas de probabilidade persistidos e figura — estágio 11)
+- [x] `thresholds.py` (precisão média, curva P×R e limiar calibrado leave-one-fold-out a partir dos histogramas de probabilidade)
+- [x] `spatial_inference.py` (bootstrap de blocos espaciais, inversão de sinais, IC por dobras e Holm)
+- [x] `comparative.py` (comparação U-Net vs SegFormer: testes por patch descritivos, inferência espacial, sensibilidade ao limiar, figuras e mapas de erro — estágio 12)
 - [x] `synthesis.py` (tabelas CSV/LaTeX e figuras de síntese para a monografia — estágio 15)
 - [x] `monograph.py` (figuras e tabelas didáticas com legendas prontas — estágio 17)
 - [x] `release.py` (empacotamento e publicação do dataset e dos modelos no Hugging Face Hub — estágio 16)
@@ -340,7 +351,7 @@ Baselines ficam em `models/{model}/{fonte}_v1/`, `artifacts/metrics|runs/{model}
 - [x] `models/segformer.py` (SegFormer binário com adaptação 3→4 bandas e logits na resolução da entrada)
 - [x] `xai/common.py` (seleção determinística de patches, carga normalizada, RGB e utilitários de fingerprint), `xai/gradcam.py` (Grad-CAM da U-Net — estágio 13), `xai/attention_rollout.py` (Attention Rollout do SegFormer — estágio 14)
 - [x] `io.py` (detecção de plataforma + montagem do Drive + garantia/resolução da raiz `tcc/` + entrega do `src/` via espelho), `bootstrap.py` (entrega do `src/` ao runtime antes do import + gravação de `src/.tcc_commit`), `setup.py` (prólogo de runtime + `install_runtime_requirements` com reinício automático em divergência de ABI), `utils.py`
-- [x] `tests/` (config, io, bootstrap, setup, utils, data/*, losses, metrics, evaluation, comparative, xai/gradcam, xai/attention_rollout, trainer e modelos — pytest)
+- [x] `tests/` (config, io, bootstrap, setup, utils, data/*, losses, metrics, evaluation, thresholds, spatial_inference, figstyle, comparative, synthesis, monograph, release, xai/gradcam, xai/attention_rollout, trainer e modelos — pytest)
 
 ## 8. Checklist de reprodutibilidade
 
@@ -356,6 +367,9 @@ Baselines ficam em `models/{model}/{fonte}_v1/`, `artifacts/metrics|runs/{model}
 - [x] Notebooks agnósticos de plataforma: executam corretamente no Colab e no Kaggle (mesmo protocolo), sem caminhos/APIs hardcoded de plataforma
 - [x] Todos os artefatos armazenados sob a raiz `tcc/` do Drive; notebooks criam a raiz e subpastas sob demanda
 - [x] Split/perda/otimizador/métricas idênticos entre os dois modelos
+- [x] Figuras com padrão único (`src/figstyle.py`): tamanho final de impressão, PNG 300 dpi + PDF vetorial, parâmetros fora de `config.yaml`
+- [x] Inferência estatística adequada à dependência espacial (blocos e dobras); testes por patch tratados como descritivos
+- [x] Guia de reprodutibilidade (`docs/REPRODUCIBILITY.md`), registro de decisões e limitações (`docs/DECISIONS.md`) e `CITATION.cff`
 
 ## 9. Decisões consolidadas e riscos em aberto
 
@@ -374,25 +388,23 @@ Baselines ficam em `models/{model}/{fonte}_v1/`, `artifacts/metrics|runs/{model}
 
 ### Avaliação e comparação
 
-- **Avaliação (estágio 11):** inferência dos pesos de cada dobra na validação espacial, com limiar fixo de 0,5 (mesmo de `src/metrics.py`) e pixels `-1` ignorados. Reporta métricas por patch, por dobra e o agregado *micro* (TP/FP/FN somados), além da média/desvio das métricas por dobra. Predições binárias e métricas por patch ficam persistidas para o estágio 12.
-- **Comparação (estágio 12):** emparelhamento das métricas por `patch_id` entre os dois modelos, validando referência, dobra e `coffee_ratio` comuns. A diferença é sempre SegFormer − U-Net. Reporta:
-  - IC bootstrap de 95% (2.000 reamostragens, semente global);
-  - teste t pareado;
-  - Wilcoxon dos postos sinalizados como teste principal, corrigido por Holm–Bonferroni entre as quatro métricas;
-  - d_z de Cohen e delta de Cliff;
-  - contagens de vitórias/empates por patch.
+- **Avaliação (estágio 11):** inferência dos pesos de cada dobra na validação espacial, com limiar fixo de 0,5 (mesmo de `src/metrics.py`) e pixels `-1` ignorados. Reporta métricas por patch, por dobra e o agregado *micro* (TP/FP/FN somados), além da média/desvio das métricas por dobra. Predições binárias, métricas por patch e histogramas de probabilidade (256 bins) ficam persistidos para o estágio 12.
+- **Comparação (estágio 12):** emparelhamento das métricas por `patch_id`, validando referência, dobra e `coffee_ratio` comuns. A diferença é sempre SegFormer − U-Net. Reporta:
+  - por patch (**descritivo**, pois os patches não são independentes): IC bootstrap de 95%, t pareado, Wilcoxon com Holm, d_z de Cohen, delta de Cliff e vitórias/empates;
+  - **inferência principal** por blocos espaciais de 3×3 patches (bootstrap de blocos com 10.000 reamostragens, teste de inversão de sinais, Holm) e por dobras (IC t, n = 5; p exato mínimo 2/32), com sensibilidade ao tamanho do bloco (1–4);
+  - sensibilidade ao limiar: AP, limiar calibrado nas demais dobras (leave-one-fold-out) e limiar ótimo (limite superior otimista), com a mesma inferência espacial sobre o IoU calibrado.
 
-  Os mapas de erro TP/FP/FN/ignorado usam patches representativos escolhidos deterministicamente (maior/menor diferença de IoU e maior/menor IoU médio, com desempate por `patch_id`). A análise é reutilizada apenas quando os fingerprints e os hashes dos pesos do estágio 11 coincidem.
+  Os mapas de erro usam patches representativos escolhidos deterministicamente (maior/menor diferença de IoU e maior/menor IoU médio, com desempate por `patch_id`). A análise é reutilizada apenas quando os fingerprints e os hashes dos pesos do estágio 11 coincidem.
 
 ### Explicabilidade
 
-- **Grad-CAM (estágio 13):** usa os pesos da dobra de cada patch (sem vazamento entre treino e validação), a camada-alvo `encoders[-1]` do U-Net e a soma dos logits da classe café na região de referência (pixels de café válidos). A seleção de patches é determinística (maior/menor IoU, maior `coffee_ratio` e IoU mediano, com desempate por `patch_id`). O mapa é normalizado em [0,1] e reamostrado bilinearmente para a resolução de entrada. Mapas, metadata com fingerprint e figura são persistidos e reutilizados apenas quando o resumo do estágio 11, os pesos das dobras e a configuração coincidem. O cálculo usa autograd sem atualizar pesos e funciona em GPU ou CPU.
-- **Attention Rollout (estágio 14):** usa os pesos da dobra de cada patch (estágio 10) e o resumo do estágio 11. O rollout é restrito à última etapa do codificador hierárquico do SegFormer, única com atenção quadrada (`sr_ratio=1`). As cabeças são agregadas pela média, a identidade é somada (conexões residuais), cada linha é normalizada e as camadas da etapa são compostas por multiplicação matricial. Sem token CLS, a relevância de cada token é a média das linhas do rollout; o mapa é reamostrado bilinearmente e normalizado em [0,1]. A atenção é obtida com `output_attentions=True` em implementação `eager` (a `sdpa` não expõe atenções), sem atualizar pesos e apenas em forward. Mapas, metadata com fingerprint e figura são persistidos e reutilizados quando resumo do estágio 11, pesos das dobras e configuração coincidem; GPU é usada quando disponível, com fallback para CPU.
+- **Grad-CAM (estágio 13):** usa os pesos da dobra de cada patch (sem vazamento entre treino e validação), a camada-alvo `encoders[-1]` do U-Net e a soma dos logits da classe café na região de referência (pixels de café válidos). A seleção de patches é determinística (maior/menor IoU, maior `coffee_ratio` e IoU mediano, com desempate por `patch_id`). O mapa é reamostrado bilinearmente e normalizado em [0,1] apenas sobre os pixels válidos (zero fora do AOI). Mapas, metadata com fingerprint e figura são persistidos e reutilizados apenas quando o resumo do estágio 11, os pesos das dobras e a configuração coincidem. O cálculo usa autograd sem atualizar pesos e funciona em GPU ou CPU.
+- **Attention Rollout (estágio 14):** usa os pesos da dobra de cada patch (estágio 10) e o resumo do estágio 11. O rollout é restrito à última etapa do codificador hierárquico do SegFormer, única com atenção quadrada (`sr_ratio=1`). As cabeças são agregadas pela média, a identidade é somada (conexões residuais), cada linha é normalizada e as camadas da etapa são compostas por multiplicação matricial. Sem token CLS, a relevância de cada token é a média das linhas do rollout ponderada pela probabilidade predita de café (restrita aos pixels válidos), o que evita o acúmulo de relevância em *attention sinks*; o mapa é reamostrado bilinearmente e normalizado em [0,1] sobre os pixels válidos. A atenção é obtida com `output_attentions=True` em implementação `eager` (a `sdpa` não expõe atenções), sem atualizar pesos e apenas em forward. Mapas, metadata com fingerprint e figura são persistidos e reutilizados quando resumo do estágio 11, pesos das dobras e configuração coincidem; GPU é usada quando disponível, com fallback para CPU.
 
 ### Síntese e publicação
 
 - **Síntese (estágio 15):** lê apenas artefatos vigentes (não retreina nem reavalia) e consolida tabelas em CSV e LaTeX e figuras para a monografia. O fingerprint cobre manifestos, resumos do estágio 11, digests das métricas/históricos de treino, comparação do estágio 12 e metadados/mapas de XAI; qualquer mudança regenera a síntese. A relevância de XAI é quantificada pela média do mapa normalizado dentro e fora da região de referência de café, por patch explicado.
-- **Comunicação (estágio 17):** reescreve os artefatos técnicos em figuras e tabelas para leitores não técnicos. Os parâmetros editoriais (largura ABNT de 16 cm, 300 dpi, PDF+PNG) são constantes em `src/monograph.py`, e não chaves de `config.yaml`: o hash do arquivo de configuração é o fingerprint dos artefatos de treino/avaliação, então qualquer acréscimo ali invalidaria os estágios 09–15. Cada figura tem um título em forma de conclusão, valores anotados e paleta segura para daltonismo; a área de café é apresentada em hectares na amostra de validação (não como estimativa regional); a seleção de talhões reaproveita os critérios determinísticos dos estágios 12–14, evitando exemplos diferentes entre capítulos. O fingerprint cobre manifesto, split, resumos do estágio 11, comparação do estágio 12 e metadados/mapas de XAI.
+- **Comunicação (estágio 17):** reescreve os artefatos técnicos em figuras e tabelas para leitores não técnicos. Os parâmetros editoriais (largura ABNT de 16 cm, 300 dpi, PDF+PNG) são constantes em `src/figstyle.py` (compartilhadas por todos os estágios com figuras), e não chaves de `config.yaml`: o hash do arquivo de configuração é o fingerprint dos artefatos de treino/avaliação, então qualquer acréscimo ali invalidaria os estágios 09–15. Cada figura tem um título em forma de conclusão, valores anotados e paleta segura para daltonismo; a área de café é apresentada em hectares na amostra de validação (não como estimativa regional); a seleção de talhões reaproveita os critérios determinísticos dos estágios 12–14, evitando exemplos diferentes entre capítulos. O fingerprint cobre manifesto, split, resumos do estágio 11, comparação do estágio 12 e metadados/mapas de XAI.
 - **Publicação (estágio 16):** o dataset e os pesos são empacotados em um staging temporário (hardlink quando possível, cópia como fallback), sem duplicar artefatos no Drive, e enviados ao Hugging Face Hub com `upload_folder`. O `HF_TOKEN` é lido apenas de env/Secrets e autenticado no notebook. Os IDs dos repositórios derivam da conta e da fonte, com sobrescrita por `HF_DATASET_REPO`, `HF_UNET_REPO` e `HF_SEGFORMER_REPO`. A reutilização exige fingerprint de manifesto, split, pesos e configuração, além da presença dos arquivos remotos esperados; o `release.json` registra repos, commits e métricas.
 
 ### Infraestrutura e rastreabilidade
@@ -409,3 +421,9 @@ Baselines ficam em `models/{model}/{fonte}_v1/`, `artifacts/metrics|runs/{model}
 - **Provisionamento de credenciais por plataforma** (Colab `userdata`/arquivo no Drive vs secrets do Kaggle vs variáveis de ambiente) — `io.py` e os notebooks leem credenciais uniformemente de variáveis de ambiente; validado no notebook `00`.
 - **Latência e cota de I/O do Drive** em etapas de escrita pesada (geração de patches, checkpoints de treino) — mitigado por um cache de trabalho local no workspace da plataforma, com a raiz `tcc/` do Drive como alvo autoritativo.
 - **Variante MiT** (b0–b2) balanceada contra a VRAM de T4/P100.
+- **Pré-treino assimétrico** (U-Net do zero × SegFormer com codificador pré-treinado): confunde arquitetura e inicialização; o controle não foi executado.
+- **Seleção da época na própria dobra de validação:** viés otimista, quantificado na tabela de treino da síntese; eliminá-lo exige partição adicional (retreino).
+- **Ruído da referência:** a concordância entre as fontes (IoU 0,43–0,57) limita o teto das métricas, que medem concordância com a Emater e não verdade de campo.
+- **Explicabilidade:** poucos recortes, métodos de naturezas distintas e sem avaliação de fidelidade.
+
+As decisões e limitações são detalhadas em [`docs/DECISIONS.md`](docs/DECISIONS.md) e o passo a passo de reprodução em [`docs/REPRODUCIBILITY.md`](docs/REPRODUCIBILITY.md).

@@ -1,0 +1,23 @@
+cff-version: 1.2.0
+message: "Se você usar este código, os dados derivados ou os resultados, cite este repositório."
+title: "Segmentação Semântica de Lavouras Cafeeiras: Análise Comparativa entre Redes Neurais Convolucionais e Transformers na Agricultura de Precisão"
+type: software
+authors:
+  - family-names: "Alves"
+    given-names: "João Pedro"
+    affiliation: "IFSULDEMINAS"
+repository-code: "https://github.com/jotap1101/tcc-lab"
+license: MIT
+abstract: >-
+  Pipeline reprodutível para o estudo comparativo entre U-Net (CNN) e SegFormer
+  (Transformer) na segmentação semântica de lavouras cafeeiras na Região Geográfica
+  Imediata de Guaxupé (MG), com imagens Sentinel-2 e validação cruzada espacial.
+  Código sob licença MIT; documentação e conjuntos de dados sob CC BY 4.0.
+keywords:
+  - segmentação semântica
+  - café
+  - Sentinel-2
+  - U-Net
+  - SegFormer
+  - explicabilidade
+  - reprodutibilidade

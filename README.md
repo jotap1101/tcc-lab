@@ -1,7 +1,9 @@
 # TCC — Segmentação Semântica de Lavouras Cafeeiras
 
-Análise comparativa entre Redes Neurais Convolucionais (U-Net) e Vision
-Transformers (SegFormer) na agricultura de precisão.
+Análise comparativa entre Redes Neurais Convolucionais (U-Net) e Transformers
+(SegFormer) na agricultura de precisão.
+
+> **Título do TCC:** Segmentação Semântica de Lavouras Cafeeiras: Análise Comparativa entre Redes Neurais Convolucionais e Transformers na Agricultura de Precisão.
 
 Bacharelado em Ciência da Computação — IFSULDEMINAS.
 
@@ -12,7 +14,11 @@ Bacharelado em Ciência da Computação — IFSULDEMINAS.
 - [Estrutura do Repositório](#estrutura-do-repositório)
 - [Pré-requisitos](#pré-requisitos)
 - [Execução](#execução)
+- [Reprodutibilidade](#reprodutibilidade)
 - [Status](#status)
+- [Resultados de referência](#resultados-de-referência)
+- [Limitações conhecidas](#limitações-conhecidas)
+- [Como citar](#como-citar)
 - [Contribuição](#contribuição)
 - [Licença](#licença)
 
@@ -41,21 +47,26 @@ para a **autoatenção global** (SegFormer) afeta:
 ### Modelos comparados
 
 - **U-Net (CNN):** arquitetura encoder-decoder convolucional, referência local.
-- **SegFormer (ViT):** `nvidia/mit-b1` por padrão (configurável para b0–b2),
+- **SegFormer (Transformer):** `nvidia/mit-b1` por padrão (configurável para b0–b2),
   com a primeira projeção adaptada de 3 para 4 bandas.
 - **Protocolo único:** mesmo split, perda, otimizador, scheduler, sementes e
-  métricas — apenas a arquitetura difere.
+  métricas — apenas a arquitetura difere. A U-Net é treinada do zero e o
+  SegFormer usa codificador pré-treinado; essa assimetria é uma limitação
+  declarada (ver [Limitações conhecidas](#limitações-conhecidas)).
 
 ### Métricas e explicabilidade
 
 - **Validação:** k-fold espacial (k = 5).
 - **Métricas em nível de pixel:** IoU, F1-Score, Precisão e Revocação.
 - **Explicabilidade:** Grad-CAM (U-Net) e Attention Rollout (SegFormer).
+- **Inferência estatística:** diferença SegFormer − U-Net com unidade de análise
+  adequada à dependência espacial (blocos espaciais e dobras) e análise de
+  sensibilidade ao limiar de decisão.
 
 ## Metodologia
 
 O pipeline segue seis blocos encadeados, cada um com estágios de notebook
-correspondentes.
+correspondentes (mais o estágio `17`, de comunicação).
 
 ### 1. Aquisição e ground truth
 
@@ -79,23 +90,32 @@ correspondentes.
 
 ### 4. Avaliação e comparação
 
-- Métricas por patch, por dobra e agregadas (estágio `11`).
-- Comparação estatística emparelhada entre arquiteturas (estágio `12`):
-  - IC bootstrap de 95% e teste t pareado;
-  - Wilcoxon com correção de Holm;
-  - tamanhos de efeito (d_z de Cohen e delta de Cliff);
+- Métricas por patch, por dobra e agregadas (estágio `11`), com histogramas de
+  probabilidade por patch para análises independentes de limiar.
+- Comparação estatística entre arquiteturas (estágio `12`):
+  - diferença SegFormer − U-Net por métrica; testes por patch (IC bootstrap,
+    t pareado, Wilcoxon com Holm, d_z de Cohen, delta de Cliff) como
+    **resultado descritivo**, pois patches vizinhos não são independentes;
+  - **inferência principal** por blocos espaciais (bootstrap de blocos e teste
+    de inversão de sinais) e por dobras (IC t, n = 5);
+  - sensibilidade ao limiar: precisão média (AP) e limiar calibrado em outras
+    dobras (leave-one-fold-out);
   - mapas de erro TP/FP/FN/ignorado.
 
 ### 5. Explicabilidade
 
-- **Grad-CAM** da U-Net (estágio `13`), a partir do encoder mais profundo.
+- **Grad-CAM** da U-Net (estágio `13`), a partir do encoder mais profundo, com
+  normalização restrita aos pixels válidos.
 - **Attention Rollout** do SegFormer (estágio `14`), na última etapa do
-  codificador hierárquico.
+  codificador hierárquico, com tokens de consulta ponderados pela probabilidade
+  predita de café.
 
 ### 6. Síntese e disseminação
 
 - Consolidação dos resultados em tabelas CSV/LaTeX e figuras (estágio `15`).
 - Publicação do dataset e dos pesos no Hugging Face Hub (estágio `16`).
+- Figuras e tabelas didáticas para monografia, artigo e slides (estágio `17`),
+  em PNG a 300 dpi e PDF vetorial.
 
 O [`PLAN.md`](PLAN.md) é o roteiro oficial, com a ordenação das fases, as
 entradas/saídas de cada notebook e o rastreador de progresso.
@@ -108,6 +128,8 @@ entradas/saídas de cada notebook e o rastreador de progresso.
 tcc/
 ├── AGENTS.md                 # regras de código, formatação e infraestrutura
 ├── PLAN.md                   # roteiro de implementação
+├── CITATION.cff              # metadados para citação
+├── docs/                     # guia de reprodutibilidade e registro de decisões
 ├── pyproject.toml            # uv, ruff, mypy, pytest
 ├── requirements-runtime.txt  # versões pinadas instaladas por notebook
 ├── src/                      # pacote Python compartilhado
@@ -135,13 +157,14 @@ MyDrive/tcc/
 ├── models/{unet,segformer}/{fonte}/                 # pesos (+ baselines *_v1)
 ├── artifacts/
 │   ├── metrics/{modelo}/{fonte}/                    # treino e avaliação
-│   ├── metrics/comparative/{fonte}/                 # comparação estatística
+│   ├── metrics/comparative/{fonte}/                 # comparação estatística (blocos, dobras, limiar)
 │   ├── runs/{modelo}/{fonte}/                       # logs e metadata de execução
 │   ├── xai/gradcam/unet/{fonte}/                    # mapas Grad-CAM
 │   ├── xai/attention_rollout/segformer/{fonte}/     # mapas Attention Rollout
 │   ├── synthesis/{fonte}/                           # tabelas da síntese
 │   ├── release/{fonte}/                             # auditoria da publicação
-│   └── figures/                                     # figuras (+ archive_v1)
+│   ├── monograph/{fonte}/                           # figuras, tabelas e legendas finais
+│   └── figures/                                     # figuras PNG+PDF (+ archive_v1)
 ├── repo/src/                                        # espelho do código-fonte
 ├── secrets/                                         # tokens OAuth (nunca versionar)
 └── ...                                              # subpastas do pipeline
@@ -189,6 +212,7 @@ caminhos a partir de `src/config.py` — nenhum caminho é hardcoded.
 | 5. Avaliação | `11`–`12` | métricas por pixel e comparação estatística |
 | 6. XAI | `13`–`14` | mapas Grad-CAM e Attention Rollout |
 | 7. Síntese e disseminação | `15`–`16` | tabelas/figuras e publicação no HF Hub |
+| 8. Comunicação | `17` | figuras e tabelas didáticas para monografia, artigo e slides |
 
 ### Portabilidade entre plataformas
 
@@ -248,9 +272,40 @@ caminhos a partir de `src/config.py` — nenhum caminho é hardcoded.
 
 Regras operacionais completas: [`AGENTS.md`](AGENTS.md).
 
+## Reprodutibilidade
+
+Três níveis de reprodução, detalhados em
+[`docs/REPRODUCIBILITY.md`](docs/REPRODUCIBILITY.md):
+
+1. **Código e testes (sem GPU, sem credenciais):**
+
+   ```bash
+   git clone --recurse-submodules https://github.com/jotap1101/tcc-lab.git
+   cd tcc-lab && uv sync --locked
+   uv run ruff check src tests && uv run mypy src tests && uv run pytest tests
+   python .opencode/tools/scripts/check_notebook.py
+   ```
+
+2. **Pipeline completo** no Colab/Kaggle: faça fork, ajuste `gee.project`,
+   `secrets.kaggle_dataset` e o `REPO_URL` do `src/bootstrap.py`, configure as
+   credenciais e execute os notebooks `00`–`17` em ordem.
+3. **Reuso dos artefatos publicados** (dataset e pesos no Hugging Face Hub,
+   estágio `16`) para reavaliar sem retreinar.
+
+Pontos de atenção:
+
+- `src/` é entregue aos notebooks a partir da `main` **pública**: publique
+  (`git push`) antes de executar.
+- Qualquer edição em `src/config.yaml` altera o `config_hash` e **refaz o
+  treino**; parâmetros editoriais das figuras ficam em `src/figstyle.py`.
+- Espera-se reprodução no **protocolo** (sementes, versões, configuração), não
+  igualdade bit a bit entre GPUs diferentes.
+- A matriz “o que mudou → de onde reexecutar” está na seção 7 do guia.
+- Decisões metodológicas e limitações: [`docs/DECISIONS.md`](docs/DECISIONS.md).
+
 ## Status
 
-Os estágios `00`–`16` estão implementados e versionados.
+Os estágios `00`–`17` estão implementados e versionados.
 
 ### Dados
 
@@ -265,34 +320,40 @@ Os estágios `00`–`16` estão implementados e versionados.
 - Treino da **U-Net** (`09`) e do **SegFormer** (`10`) na fonte escolhida
   (Emater 2018), com o protocolo único de `src/trainer.py`.
 - **Avaliação por pixel** (`11`): IoU/F1/Precisão/Revocação por patch, por dobra
-  e agregados, com predições binárias persistidas.
-- **Análise comparativa** (`12`) emparelhada por patch: diferença
-  SegFormer − U-Net, IC bootstrap, teste t pareado, Wilcoxon com Holm,
-  tamanhos de efeito, figura comparativa e mapas de erro.
+  e agregados, com predições binárias e histogramas de probabilidade persistidos.
+- **Análise comparativa** (`12`): testes por patch (descritivos), inferência por
+  blocos espaciais e por dobras, sensibilidade ao limiar (AP e limiar calibrado),
+  figuras de comparação, de inferência e de limiar, e mapas de erro.
 
 ### Explicabilidade
 
-- **Grad-CAM da U-Net** (`13`): pesos por dobra, camada-alvo `encoders[-1]`,
-  pontuação na região de referência de café e persistência em
+- **Grad-CAM da U-Net** (`13`): pesos por dobra, camada `encoders[-1]`, pontuação
+  na região de referência, normalização sobre pixels válidos; artefatos em
   `artifacts/xai/gradcam/unet/<fonte>/`.
-- **Attention Rollout do SegFormer** (`14`): última etapa do codificador,
-  média das cabeças, conexões residuais, composição das camadas e persistência
-  em `artifacts/xai/attention_rollout/segformer/<fonte>/`.
+- **Attention Rollout do SegFormer** (`14`): última etapa do codificador, média
+  das cabeças, conexões residuais, composição das camadas e consulta ponderada
+  pela probabilidade predita de café; artefatos em
+  `artifacts/xai/attention_rollout/segformer/<fonte>/`.
 
-### Síntese e publicação
+### Síntese, publicação e comunicação
 
-- **Síntese** (`15`): tabelas CSV/LaTeX e figuras de curvas de treino,
-  avaliação/comparação e relevância quantitativa dos mapas, em
-  `artifacts/synthesis/<fonte>/` e `artifacts/figures/`.
+- **Síntese** (`15`): tabelas CSV/LaTeX (inclui inferência espacial,
+  sensibilidade ao limiar e viés de seleção de época) e figuras de curvas de
+  treino, avaliação/comparação e relevância dos mapas.
 - **Publicação** (`16`): dataset de patches (CC BY 4.0) e pesos por dobra da
   U-Net e do SegFormer (MIT) no Hugging Face Hub, com model cards, metadados e
   autenticação por `HF_TOKEN`.
+- **Comunicação** (`17`): 18 figuras e até 8 tabelas didáticas, com legendas
+  prontas (`captions.tex`/`captions.md`) para monografia, artigo e slides.
+- Todas as figuras seguem `src/figstyle.py`: 16 cm de largura, PNG a 300 dpi e
+  PDF vetorial.
 
 ### Pacote e infraestrutura
 
 - `src/` cobre `config`, `io`/`bootstrap`/`setup`, `data/*`, `losses`,
-  `metrics`, `evaluation`, `comparative`, `trainer`, `models/*`,
-  `xai/*`, `synthesis` e `release`.
+  `metrics`, `evaluation`, `thresholds`, `spatial_inference`, `comparative`,
+  `trainer`, `models/*`, `xai/*`, `synthesis`, `release`, `monograph` e
+  `figstyle`.
 - `tests/` e CI (ruff, mypy, pytest e convenções de notebook).
 - O primeiro treino da U-Net (dataset sem filtro e antes da correção de
   bbox/split) está preservado como `emater_v1`, com metadados em
@@ -300,6 +361,48 @@ Os estágios `00`–`16` estão implementados e versionados.
   o `BASELINE.json` registra a limitação conhecida.
 
 Consulte o [`PLAN.md`](PLAN.md) para o detalhamento por estágio.
+
+## Resultados de referência
+
+Fonte Emater 2018, 125 recortes de validação, validação espacial em 5 dobras,
+limiar 0,5 (agregado micro, execução de outubro de 2026):
+
+| Modelo | IoU | F1 | Precisão | Revocação |
+| --- | --- | --- | --- | --- |
+| U-Net | 0,617 | 0,763 | 0,694 | 0,849 |
+| SegFormer | 0,688 | 0,815 | 0,802 | 0,829 |
+
+O SegFormer tem IoU maior e desempenho mais estável entre as dobras; a U-Net tem
+revocação ligeiramente maior. Os valores exatos, os intervalos de confiança por
+bloco espacial e por dobra, a sensibilidade ao limiar e as tabelas completas são
+regenerados pelos estágios `11`, `12`, `15` e `17` (ver
+[`docs/REPRODUCIBILITY.md`](docs/REPRODUCIBILITY.md#9-onde-está-cada-resultado)).
+Pequenas variações numéricas são esperadas entre execuções em hardwares
+distintos.
+
+## Limitações conhecidas
+
+Resumo; a discussão completa está em [`docs/DECISIONS.md`](docs/DECISIONS.md).
+
+- **Referência imperfeita:** as métricas medem a concordância com o mapa da
+  Emater (2018), cuja concordância com as outras fontes é moderada (IoU de 0,43
+  a 0,57); não são verdade de campo.
+- **Pré-treino assimétrico:** a U-Net é treinada do zero e o SegFormer usa
+  codificador pré-treinado, então a vantagem observada não se deve só à
+  arquitetura. O controle correspondente não foi executado.
+- **Seleção otimista de época:** a melhor época é escolhida na própria dobra de
+  validação (viés quantificado na tabela de treino da síntese).
+- **Dependência espacial:** os testes por patch são descritivos; a inferência
+  principal usa blocos espaciais e dobras.
+- **Explicabilidade:** poucos recortes, métodos de natureza diferente (gradiente
+  vs. atenção) e sem avaliação de fidelidade; o contraste dentro × fora não é
+  diretamente comparável entre os métodos.
+- **Escopo:** uma região, um sensor, um ano e uma fonte de referência.
+
+## Como citar
+
+Use os metadados de [`CITATION.cff`](CITATION.cff) (o GitHub oferece o botão
+“Cite this repository”). Código sob MIT; documentação e dados sob CC BY 4.0.
 
 ## Contribuição
 
