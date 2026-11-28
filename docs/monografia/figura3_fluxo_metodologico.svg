@@ -1,0 +1,82 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1029" viewBox="0 0 1200 1029">
+<defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#546E7A"/></marker></defs>
+<rect x="0" y="0" width="1200" height="1029" rx="0" fill="#FFFFFF" stroke="none" stroke-width="2" />
+<rect x="15" y="20" width="190" height="150" rx="8" fill="#E8EEF3" stroke="none" stroke-width="0" />
+<text x="110.0" y="89.0" font-family="'Liberation Sans', Arial, Helvetica, sans-serif" font-size="24" font-weight="bold" fill="#263238" text-anchor="middle">Área e dados</text>
+<text x="110.0" y="121.0" font-family="'Liberation Sans', Arial, Helvetica, sans-serif" font-size="21" font-weight="normal" fill="#455A64" text-anchor="middle">Estágios 00–04</text>
+<rect x="15" y="216" width="190" height="150" rx="8" fill="#E8EEF3" stroke="none" stroke-width="0" />
+<text x="110.0" y="271.0" font-family="'Liberation Sans', Arial, Helvetica, sans-serif" font-size="24" font-weight="bold" fill="#263238" text-anchor="middle">Conjunto</text>
+<text x="110.0" y="299.0" font-family="'Liberation Sans', Arial, Helvetica, sans-serif" font-size="24" font-weight="bold" fill="#263238" text-anchor="middle">de dados</text>
+<text x="110.0" y="331.0" font-family="'Liberation Sans', Arial, Helvetica, sans-serif" font-size="21" font-weight="normal" fill="#455A64" text-anchor="middle">Estágios 05–08</text>
+<rect x="15" y="412" width="190" height="225" rx="8" fill="#E8EEF3" stroke="none" stroke-width="0" />
+<text x="110.0" y="518.5" font-family="'Liberation Sans', Arial, Helvetica, sans-serif" font-size="24" font-weight="bold" fill="#263238" text-anchor="middle">Treinamento</text>
+<text x="110.0" y="550.5" font-family="'Liberation Sans', Arial, Helvetica, sans-serif" font-size="21" font-weight="normal" fill="#455A64" text-anchor="middle">Estágios 09–10</text>
+<rect x="15" y="683" width="190" height="150" rx="8" fill="#E8EEF3" stroke="none" stroke-width="0" />
+<text x="110.0" y="752.0" font-family="'Liberation Sans', Arial, Helvetica, sans-serif" font-size="24" font-weight="bold" fill="#263238" text-anchor="middle">Avaliação</text>
+<text x="110.0" y="784.0" font-family="'Liberation Sans', Arial, Helvetica, sans-serif" font-size="21" font-weight="normal" fill="#455A64" text-anchor="middle">Estágios 11–14</text>
+<rect x="15" y="879" width="190" height="130" rx="8" fill="#E8EEF3" stroke="none" stroke-width="0" />
+<text x="110.0" y="938.0" font-family="'Liberation Sans', Arial, Helvetica, sans-serif" font-size="24" font-weight="bold" fill="#263238" text-anchor="middle">Síntese</text>
+<text x="110.0" y="970.0" font-family="'Liberation Sans', Arial, Helvetica, sans-serif" font-size="21" font-weight="normal" fill="#455A64" text-anchor="middle">Estágios 15–17</text>
+<rect x="225.0" y="20" width="293.3333333333333" height="150" rx="8" fill="#FFFFFF" stroke="#78909C" stroke-width="2.2" />
+<text x="371.66666666666663" y="74.0" font-family="'Liberation Sans', Arial, Helvetica, sans-serif" font-size="24" font-weight="bold" fill="#263238" text-anchor="middle">Área de estudo</text>
+<text x="371.66666666666663" y="108.0" font-family="'Liberation Sans', Arial, Helvetica, sans-serif" font-size="22" font-weight="normal" fill="#455A64" text-anchor="middle">RGI de Guaxupé (MG)</text>
+<text x="371.66666666666663" y="136.0" font-family="'Liberation Sans', Arial, Helvetica, sans-serif" font-size="22" font-weight="normal" fill="#455A64" text-anchor="middle">9 municípios</text>
+<rect x="558.3333333333333" y="20" width="293.3333333333333" height="150" rx="8" fill="#FFFFFF" stroke="#78909C" stroke-width="2.2" />
+<text x="704.9999999999999" y="74.0" font-family="'Liberation Sans', Arial, Helvetica, sans-serif" font-size="24" font-weight="bold" fill="#263238" text-anchor="middle">Imagens Sentinel-2</text>
+<text x="704.9999999999999" y="108.0" font-family="'Liberation Sans', Arial, Helvetica, sans-serif" font-size="22" font-weight="normal" fill="#455A64" text-anchor="middle">mosaico de 2018</text>
+<text x="704.9999999999999" y="136.0" font-family="'Liberation Sans', Arial, Helvetica, sans-serif" font-size="22" font-weight="normal" fill="#455A64" text-anchor="middle">4 bandas, 10 m</text>
+<rect x="891.6666666666666" y="20" width="293.3333333333333" height="150" rx="8" fill="#FFFFFF" stroke="#78909C" stroke-width="2.2" />
+<text x="1038.3333333333333" y="74.0" font-family="'Liberation Sans', Arial, Helvetica, sans-serif" font-size="24" font-weight="bold" fill="#263238" text-anchor="middle">Referência</text>
+<text x="1038.3333333333333" y="108.0" font-family="'Liberation Sans', Arial, Helvetica, sans-serif" font-size="22" font-weight="normal" fill="#455A64" text-anchor="middle">Emater-MG (2018),</text>
+<text x="1038.3333333333333" y="136.0" font-family="'Liberation Sans', Arial, Helvetica, sans-serif" font-size="22" font-weight="normal" fill="#455A64" text-anchor="middle">escolhida entre 3 fontes</text>
+<rect x="225.0" y="216" width="293.3333333333333" height="150" rx="8" fill="#FFFFFF" stroke="#78909C" stroke-width="2.2" />
+<text x="371.66666666666663" y="270.0" font-family="'Liberation Sans', Arial, Helvetica, sans-serif" font-size="24" font-weight="bold" fill="#263238" text-anchor="middle">Pré-processamento</text>
+<text x="371.66666666666663" y="304.0" font-family="'Liberation Sans', Arial, Helvetica, sans-serif" font-size="22" font-weight="normal" fill="#455A64" text-anchor="middle">alinhamento à grade</text>
+<text x="371.66666666666663" y="332.0" font-family="'Liberation Sans', Arial, Helvetica, sans-serif" font-size="22" font-weight="normal" fill="#455A64" text-anchor="middle">e normalização</text>
+<line x1="522.3333333333333" y1="291.0" x2="554.3333333333333" y2="291.0" stroke="#546E7A" stroke-width="2.5" marker-end="url(#a)"/>
+<rect x="558.3333333333333" y="216" width="293.3333333333333" height="150" rx="8" fill="#FFFFFF" stroke="#78909C" stroke-width="2.2" />
+<text x="704.9999999999999" y="270.0" font-family="'Liberation Sans', Arial, Helvetica, sans-serif" font-size="24" font-weight="bold" fill="#263238" text-anchor="middle">Recortes</text>
+<text x="704.9999999999999" y="304.0" font-family="'Liberation Sans', Arial, Helvetica, sans-serif" font-size="22" font-weight="normal" fill="#455A64" text-anchor="middle">125 recortes de</text>
+<text x="704.9999999999999" y="332.0" font-family="'Liberation Sans', Arial, Helvetica, sans-serif" font-size="22" font-weight="normal" fill="#455A64" text-anchor="middle">512 × 512 pixels</text>
+<line x1="855.6666666666665" y1="291.0" x2="887.6666666666665" y2="291.0" stroke="#546E7A" stroke-width="2.5" marker-end="url(#a)"/>
+<rect x="891.6666666666666" y="216" width="293.3333333333333" height="150" rx="8" fill="#FFFFFF" stroke="#78909C" stroke-width="2.2" />
+<text x="1038.3333333333333" y="270.0" font-family="'Liberation Sans', Arial, Helvetica, sans-serif" font-size="24" font-weight="bold" fill="#263238" text-anchor="middle">Validação cruzada</text>
+<text x="1038.3333333333333" y="304.0" font-family="'Liberation Sans', Arial, Helvetica, sans-serif" font-size="22" font-weight="normal" fill="#455A64" text-anchor="middle">5 dobras espaciais</text>
+<text x="1038.3333333333333" y="332.0" font-family="'Liberation Sans', Arial, Helvetica, sans-serif" font-size="22" font-weight="normal" fill="#455A64" text-anchor="middle">disjuntas</text>
+<rect x="225" y="412" width="960" height="225" rx="12" fill="#F5F7F9" stroke="#78909C" stroke-width="2" stroke-dasharray="9 6"/>
+<text x="705.0" y="446" font-family="'Liberation Sans', Arial, Helvetica, sans-serif" font-size="24" font-weight="bold" fill="#455A64" text-anchor="middle">Mesmo protocolo para os dois modelos</text>
+<rect x="295" y="464" width="330" height="100" rx="8" fill="#DCEAF8" stroke="#1E63B5" stroke-width="2.2" />
+<text x="460.0" y="507.0" font-family="'Liberation Sans', Arial, Helvetica, sans-serif" font-size="24" font-weight="bold" fill="#0D3C73" text-anchor="middle">U-Net (CNN)</text>
+<text x="460.0" y="541.0" font-family="'Liberation Sans', Arial, Helvetica, sans-serif" font-size="22" font-weight="normal" fill="#455A64" text-anchor="middle">pesos aleatórios</text>
+<rect x="785" y="464" width="330" height="100" rx="8" fill="#FDE6D3" stroke="#D9640E" stroke-width="2.2" />
+<text x="950.0" y="507.0" font-family="'Liberation Sans', Arial, Helvetica, sans-serif" font-size="24" font-weight="bold" fill="#8A3A05" text-anchor="middle">SegFormer (Transformer)</text>
+<text x="950.0" y="541.0" font-family="'Liberation Sans', Arial, Helvetica, sans-serif" font-size="22" font-weight="normal" fill="#455A64" text-anchor="middle">pré-treinado no ImageNet</text>
+<text x="705.0" y="510.0" font-family="'Liberation Sans', Arial, Helvetica, sans-serif" font-size="21" font-weight="normal" fill="#455A64" text-anchor="middle" font-style="italic">mesmos</text>
+<text x="705.0" y="536.0" font-family="'Liberation Sans', Arial, Helvetica, sans-serif" font-size="21" font-weight="normal" fill="#455A64" text-anchor="middle" font-style="italic">dados</text>
+<text x="705.0" y="615" font-family="'Liberation Sans', Arial, Helvetica, sans-serif" font-size="22" font-weight="normal" fill="#263238" text-anchor="middle">perda Dice + Focal + Boundary · Adam · 100 épocas · mesmas sementes</text>
+<rect x="225.0" y="683" width="293.3333333333333" height="150" rx="8" fill="#FFFFFF" stroke="#78909C" stroke-width="2.2" />
+<text x="371.66666666666663" y="737.0" font-family="'Liberation Sans', Arial, Helvetica, sans-serif" font-size="24" font-weight="bold" fill="#263238" text-anchor="middle">Métricas por pixel</text>
+<text x="371.66666666666663" y="771.0" font-family="'Liberation Sans', Arial, Helvetica, sans-serif" font-size="22" font-weight="normal" fill="#455A64" text-anchor="middle">IoU, F1-Score,</text>
+<text x="371.66666666666663" y="799.0" font-family="'Liberation Sans', Arial, Helvetica, sans-serif" font-size="22" font-weight="normal" fill="#455A64" text-anchor="middle">Precisão e Revocação</text>
+<rect x="558.3333333333333" y="683" width="293.3333333333333" height="150" rx="8" fill="#FFFFFF" stroke="#78909C" stroke-width="2.2" />
+<text x="704.9999999999999" y="737.0" font-family="'Liberation Sans', Arial, Helvetica, sans-serif" font-size="24" font-weight="bold" fill="#263238" text-anchor="middle">Comparação pareada</text>
+<text x="704.9999999999999" y="771.0" font-family="'Liberation Sans', Arial, Helvetica, sans-serif" font-size="22" font-weight="normal" fill="#455A64" text-anchor="middle">Wilcoxon + Holm</text>
+<text x="704.9999999999999" y="799.0" font-family="'Liberation Sans', Arial, Helvetica, sans-serif" font-size="22" font-weight="normal" fill="#455A64" text-anchor="middle">por recorte</text>
+<rect x="891.6666666666666" y="683" width="293.3333333333333" height="150" rx="8" fill="#FFFFFF" stroke="#78909C" stroke-width="2.2" />
+<text x="1038.3333333333333" y="723.0" font-family="'Liberation Sans', Arial, Helvetica, sans-serif" font-size="24" font-weight="bold" fill="#263238" text-anchor="middle">Explicabilidade</text>
+<text x="1038.3333333333333" y="757.0" font-family="'Liberation Sans', Arial, Helvetica, sans-serif" font-size="22" font-weight="normal" fill="#455A64" text-anchor="middle">Grad-CAM (U-Net)</text>
+<text x="1038.3333333333333" y="785.0" font-family="'Liberation Sans', Arial, Helvetica, sans-serif" font-size="22" font-weight="normal" fill="#455A64" text-anchor="middle">Attention Rollout</text>
+<text x="1038.3333333333333" y="813.0" font-family="'Liberation Sans', Arial, Helvetica, sans-serif" font-size="22" font-weight="normal" fill="#455A64" text-anchor="middle">(SegFormer)</text>
+<line x1="522.3333333333333" y1="758.0" x2="554.3333333333333" y2="758.0" stroke="#546E7A" stroke-width="2.5" marker-end="url(#a)"/>
+<rect x="295.0" y="879" width="380" height="130" rx="8" fill="#FFFFFF" stroke="#78909C" stroke-width="2.2" />
+<text x="485.0" y="937.0" font-family="'Liberation Sans', Arial, Helvetica, sans-serif" font-size="24" font-weight="bold" fill="#263238" text-anchor="middle">Síntese dos resultados</text>
+<text x="485.0" y="971.0" font-family="'Liberation Sans', Arial, Helvetica, sans-serif" font-size="22" font-weight="normal" fill="#455A64" text-anchor="middle">tabelas e figuras</text>
+<rect x="735.0" y="879" width="380" height="130" rx="8" fill="#FFFFFF" stroke="#78909C" stroke-width="2.2" />
+<text x="925.0" y="937.0" font-family="'Liberation Sans', Arial, Helvetica, sans-serif" font-size="24" font-weight="bold" fill="#263238" text-anchor="middle">Publicação</text>
+<text x="925.0" y="971.0" font-family="'Liberation Sans', Arial, Helvetica, sans-serif" font-size="22" font-weight="normal" fill="#455A64" text-anchor="middle">dados e pesos no Hugging Face</text>
+<line x1="679.0" y1="944.0" x2="731.0" y2="944.0" stroke="#546E7A" stroke-width="2.5" marker-end="url(#a)"/>
+<line x1="705.0" y1="174" x2="705.0" y2="212" stroke="#546E7A" stroke-width="2.5" marker-end="url(#a)"/>
+<line x1="705.0" y1="370" x2="705.0" y2="408" stroke="#546E7A" stroke-width="2.5" marker-end="url(#a)"/>
+<line x1="705.0" y1="641" x2="705.0" y2="679" stroke="#546E7A" stroke-width="2.5" marker-end="url(#a)"/>
+<line x1="705.0" y1="837" x2="705.0" y2="875" stroke="#546E7A" stroke-width="2.5" marker-end="url(#a)"/>
+</svg>
