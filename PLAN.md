@@ -180,7 +180,8 @@ Todos ficam sob a raiz `tcc/` do Drive, com caminhos resolvidos de `config.yaml`
 | 09/10 | histórico e metadata de execução | `artifacts/runs/{model}/{fonte}/fold_{i}.json` + `run.meta.json` |
 | 11 | avaliação por dobra e resumo | `artifacts/metrics/{model}/{fonte}/evaluation/{fold_{i}.json,summary.json}` |
 | 11 | métricas por patch e predições binárias | `artifacts/metrics/{model}/{fonte}/evaluation/patch_metrics_fold_{i}.parquet` e `predictions_fold_{i}.npz` |
-| 12 | comparação estatística | `artifacts/metrics/comparative/<fonte>/comparison.json` |
+| 11 | histogramas de probabilidade por patch (café/não-café, 256 bins) | `artifacts/metrics/{model}/{fonte}/evaluation/probability_histograms_fold_{i}.npz` |
+| 12 | comparação estatística: testes por patch (descritivos), inferência por blocos espaciais e dobras, sensibilidade ao limiar (AP, limiar calibrado leave-one-fold-out) | `artifacts/metrics/comparative/<fonte>/comparison.json` |
 | 13 | mapas e metadata Grad-CAM | `artifacts/xai/gradcam/unet/<fonte>/{gradcam_maps.npz,gradcam_metadata.json}` |
 | 14 | mapas e metadata Attention Rollout | `artifacts/xai/attention_rollout/segformer/<fonte>/{attention_rollout_maps.npz,attention_rollout_metadata.json}` |
 | 15 | tabelas e resumo da síntese | `artifacts/synthesis/<fonte>/{tables/*.csv,tables/*.tex,summary.json,synthesis_metadata.json}` |
@@ -193,7 +194,8 @@ As métricas de treino guardam `manifest_fingerprint_hash`, `split_fingerprint_h
 
 Figuras ficam em `artifacts/figures/`:
 
-- `comparison_<região>_<ano>_<fonte>.png` e `error_maps_<região>_<ano>_<fonte>.png` — estágio 12;
+- `comparison_`, `error_maps_`, `inference_` e `threshold_` `<região>_<ano>_<fonte>.png` — estágio 12;
+- todas as figuras são geradas no tamanho final de impressão (16 cm de largura, `src/figstyle.py`) em PNG a 300 dpi e PDF vetorial lado a lado;
 - `gradcam_unet_<região>_<ano>_<fonte>.png` — estágio 13;
 - `attention_rollout_segformer_<região>_<ano>_<fonte>.png` — estágio 14;
 - `synthesis_{training_curves,evaluation_overview,xai_relevance}_<região>_<ano>_<fonte>.png` — estágio 15;

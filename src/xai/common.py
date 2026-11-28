@@ -17,6 +17,7 @@ import numpy as np
 import pandas as pd
 import torch
 
+from src import figstyle
 from src.config import get_config
 from src.data.dataset import load_normalization_stats, normalize_patch
 from src.data.patch_generation import load_manifest, resolve_from_root
@@ -165,3 +166,57 @@ def load_stats_and_manifest(
     return load_normalization_stats(storage_paths, source_name), load_manifest(
         storage_paths, source_name
     )
+
+
+def render_heatmap_figure(
+    samples: list[Any], heatmaps: list[np.ndarray], method: str
+) -> dict[str, bytes]:
+    """Por recorte: imagem RGB, referência, mapa de relevância e sobreposição.
+
+    ``samples`` expõe `image_rgb`, `reference`, `label`, `fold` e `iou`;
+    ``heatmaps`` traz os mapas normalizados em [0, 1] na mesma ordem.
+    """
+    from matplotlib.cm import ScalarMappable
+    from matplotlib.colors import ListedColormap, Normalize
+
+    if not samples:
+        raise ValueError(f"Nenhuma amostra disponível para a figura {method}.")
+    reference_cmap = ListedColormap(["#f5f5f5", "#2e7d32"])
+    columns = ["Imagem (RGB)", "Referência (café)", method, "Sobreposição"]
+
+    def _build(plt: Any, figure: Any) -> None:
+        axes = figure.subplots(len(samples), 4, squeeze=False)
+        for row, (sample, heatmap) in enumerate(zip(samples, heatmaps, strict=True)):
+            axes[row, 0].imshow(sample.image_rgb)
+            axes[row, 1].imshow(
+                sample.reference.astype(np.uint8), cmap=reference_cmap, vmin=0, vmax=1
+            )
+            axes[row, 2].imshow(heatmap, cmap="turbo", vmin=0.0, vmax=1.0)
+            axes[row, 3].imshow(sample.image_rgb)
+            axes[row, 3].imshow(heatmap, cmap="turbo", alpha=0.45, vmin=0.0, vmax=1.0)
+            axes[row, 0].set_ylabel(
+                f"{figstyle.wrap_label(sample.label)}\n(dobra {sample.fold}, IoU {sample.iou:.2f})",
+                fontsize=6.5,
+                labelpad=4,
+            )
+            for axis in axes[row]:
+                axis.set_xticks([])
+                axis.set_yticks([])
+                axis.grid(False)
+                for spine in axis.spines.values():
+                    spine.set_visible(False)
+        for column, title in enumerate(columns):
+            axes[0, column].set_title(title)
+        mappable = ScalarMappable(norm=Normalize(0.0, 1.0), cmap="turbo")
+        mappable.set_array(np.asarray([]))
+        figure.colorbar(
+            mappable,
+            ax=axes[:, 2:].ravel().tolist(),
+            orientation="horizontal",
+            location="bottom",
+            shrink=0.5,
+            aspect=40,
+            label=f"Relevância normalizada ({method}, apenas pixels válidos)",
+        )
+
+    return figstyle.render_publication(_build, height_cm=3.9 * len(samples) + 2.2)

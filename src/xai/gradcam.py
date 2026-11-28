@@ -23,6 +23,7 @@ import numpy as np
 import torch
 from torch import nn
 
+from src import figstyle
 from src.config import get_config
 from src.data.mask_utils import reference_year
 from src.data.source_decision import chosen_source
@@ -34,7 +35,7 @@ from src.evaluation import (
 )
 from src.xai import common
 
-GRADCAM_SCHEMA_VERSION = 1
+GRADCAM_SCHEMA_VERSION = 2
 MODEL_NAME = "unet"
 TARGET_LAYER_NAME = "encoders[-1]"
 SCORE_REGION = "reference_coffee"
@@ -118,13 +119,17 @@ def compute_gradcam(
     image: torch.Tensor,
     target_mask: torch.Tensor | None = None,
     target_layer: nn.Module | None = None,
+    valid_mask: torch.Tensor | None = None,
 ) -> np.ndarray:
     """Calcula o mapa Grad-CAM de um patch (uma imagem) para a classe café.
 
     ``image`` tem forma (C, H, W) ou (1, C, H, W). Quando ``target_mask``
     (H, W) é fornecido, a pontuação é a soma dos logits nessa região; sem máscara
-    (ou com máscara vazia), usa todos os pixels. Retorna um mapa float32 em
-    [0, 1] na resolução da entrada, calculado com autograd (sem alterar pesos).
+    (ou com máscara vazia), usa todos os pixels. ``valid_mask`` (H, W) restringe a
+    normalização min-max aos pixels válidos e zera o mapa fora do AOI, evitando
+    que a relevância sobre a região sem dados domine a escala. Retorna um mapa
+    float32 em [0, 1] na resolução da entrada, calculado com autograd (sem
+    alterar pesos).
     """
     if image.dim() == 3:
         image = image.unsqueeze(0)
@@ -167,11 +172,23 @@ def compute_gradcam(
         mode="bilinear",
         align_corners=False,
     )[0, 0].detach()
-    minimum = float(cam.min())
-    maximum = float(cam.max())
+    valid = (
+        torch.ones_like(cam, dtype=torch.bool)
+        if valid_mask is None
+        else valid_mask.to(device=cam.device, dtype=torch.bool)
+    )
+    if valid_mask is not None and valid.shape != cam.shape:
+        raise ValueError(
+            f"Máscara de validade {tuple(valid.shape)} incompatível com {tuple(cam.shape)}."
+        )
+    if not bool(valid.any()):
+        return np.zeros(tuple(image.shape[-2:]), dtype=np.float32)
+    minimum = float(cam[valid].min())
+    maximum = float(cam[valid].max())
     if maximum <= minimum:
         return np.zeros(tuple(image.shape[-2:]), dtype=np.float32)
-    normalized = (cam - minimum) / (maximum - minimum)
+    normalized = ((cam - minimum) / (maximum - minimum)).clamp(0.0, 1.0)
+    normalized = torch.where(valid, normalized, torch.zeros_like(normalized))
     return normalized.cpu().numpy().astype(np.float32)
 
 
@@ -187,6 +204,7 @@ def gradcam_fingerprint(
         "source_name": source_name,
         "target_layer": TARGET_LAYER_NAME,
         "score_region": SCORE_REGION,
+        "valid_masked": True,
         "evaluation_schema_version": summary.get("schema_version"),
         "manifest_fingerprint_hash": summary["fingerprint"]["manifest_fingerprint_hash"],
         "split_fingerprint_hash": summary["fingerprint"]["split_fingerprint_hash"],
@@ -273,6 +291,7 @@ def run_gradcam(
             sample.normalized.unsqueeze(0).to(device),
             target_mask=torch.from_numpy(sample.reference).to(device),
             target_layer=target_layer,
+            valid_mask=torch.from_numpy(sample.valid).to(device),
         )
         samples.append(
             GradCamSample(
@@ -295,6 +314,7 @@ def run_gradcam(
         "device": str(device),
         "target_layer": TARGET_LAYER_NAME,
         "score_region": SCORE_REGION,
+        "valid_masked": True,
         "n_patches": len(samples),
         "patches": [
             {
@@ -311,7 +331,7 @@ def run_gradcam(
     }
     _persist_maps(maps_file, samples)
     io.persist_json(metadata_file, metadata)
-    io.persist_bytes(figure_file, render_gradcam_figure(samples))
+    figstyle.persist_figure(figure_file, render_gradcam_figure(samples))
     print(
         f"Grad-CAM: {len(samples)} patches | dobras "
         f"{sorted({sample.fold for sample in samples})} | {device}"
@@ -328,52 +348,6 @@ def run_gradcam(
     )
 
 
-def render_gradcam_figure(samples: list[GradCamSample]) -> bytes:
-    """Renderiza RGB, referência, Grad-CAM e sobreposição por patch."""
-    from matplotlib.cm import ScalarMappable
-    from matplotlib.colors import ListedColormap, Normalize
-
-    from src.data.raster_utils import render_figure
-
-    if not samples:
-        raise ValueError("Nenhuma amostra disponível para a figura Grad-CAM.")
-    reference_cmap = ListedColormap(["#f5f5f5", "#2e7d32"])
-
-    def _build(plt: Any) -> Any:
-        figure, axes = plt.subplots(
-            len(samples),
-            4,
-            figsize=(16, 4.2 * len(samples)),
-            squeeze=False,
-            constrained_layout=True,
-        )
-        for row, sample in enumerate(samples):
-            axes[row, 0].imshow(sample.image_rgb)
-            axes[row, 0].set_title(
-                f"{sample.label}\n{sample.patch_id} (dobra {sample.fold})", fontsize=9
-            )
-            axes[row, 1].imshow(
-                sample.reference.astype(np.uint8), cmap=reference_cmap, vmin=0, vmax=1
-            )
-            axes[row, 1].set_title("Referência (café)", fontsize=9)
-            axes[row, 2].imshow(sample.cam, cmap="turbo", vmin=0.0, vmax=1.0)
-            axes[row, 2].set_title(f"Grad-CAM (IoU {sample.iou:.3f})", fontsize=9)
-            axes[row, 3].imshow(sample.image_rgb)
-            axes[row, 3].imshow(sample.cam, cmap="turbo", alpha=0.45, vmin=0.0, vmax=1.0)
-            axes[row, 3].set_title("Sobreposição", fontsize=9)
-            for axis in axes[row]:
-                axis.axis("off")
-        mappable = ScalarMappable(norm=Normalize(0.0, 1.0), cmap="turbo")
-        mappable.set_array(np.asarray([]))
-        figure.colorbar(
-            mappable,
-            ax=axes[:, 2].tolist(),
-            orientation="horizontal",
-            fraction=0.02,
-            pad=0.02,
-            label="relevância Grad-CAM",
-        )
-        figure.suptitle("Grad-CAM — U-Net (validação espacial)", fontsize=13)
-        return figure
-
-    return render_figure(_build)
+def render_gradcam_figure(samples: list[GradCamSample]) -> dict[str, bytes]:
+    """Por recorte: imagem RGB, referência, Grad-CAM e sobreposição."""
+    return common.render_heatmap_figure(samples, [sample.cam for sample in samples], "Grad-CAM")

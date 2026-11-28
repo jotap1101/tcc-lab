@@ -24,6 +24,7 @@ import torch
 from torch import nn
 from torch.utils.data import DataLoader
 
+from src import figstyle
 from src.config import get_config
 from src.data.dataset import PatchDataset, load_normalization_stats
 from src.data.mask_utils import reference_year
@@ -38,9 +39,10 @@ from src.data.spatial_split import fold_count, split_fingerprint_hash
 from src.metrics import f1_score, iou, precision, recall
 from src.models.segformer import build_segformer
 from src.models.unet import build_unet
+from src.thresholds import PROBABILITY_BINS, average_precision, probability_bins
 from src.trainer import config_hash, weights_path
 
-EVALUATION_SCHEMA_VERSION = 1
+EVALUATION_SCHEMA_VERSION = 2
 DEFAULT_THRESHOLD = 0.5
 METRIC_KEYS = ("iou", "f1", "precision", "recall")
 COUNT_KEYS = ("tp", "fp", "fn")
@@ -62,6 +64,8 @@ class FoldEvaluation:
     metrics_path: Path
     predictions_path: Path
     patch_metrics_path: Path
+    probabilities_path: Path
+    average_precision: float | None
     skipped: bool
 
 
@@ -82,6 +86,16 @@ def predictions_path(
 ) -> Path:
     """Caminho das predições binárias (patches de validação) de uma dobra."""
     return evaluation_dir(storage_paths, model_name, source_name) / f"predictions_fold_{fold}.npz"
+
+
+def probabilities_path(
+    storage_paths: dict[str, Path], model_name: str, source_name: str, fold: int
+) -> Path:
+    """Caminho dos histogramas de probabilidade por patch de uma dobra avaliada."""
+    return (
+        evaluation_dir(storage_paths, model_name, source_name)
+        / f"probability_histograms_fold_{fold}.npz"
+    )
 
 
 def patch_metrics_path(
@@ -137,6 +151,8 @@ def summary_is_current(storage_paths: dict[str, Path], model_name: str, source_n
     except (json.JSONDecodeError, OSError):
         return False
     if stored.get("model") != model_name or stored.get("source_name") != source_name:
+        return False
+    if stored.get("schema_version") != EVALUATION_SCHEMA_VERSION:
         return False
     if stored.get("fingerprint") != summary_fingerprint(storage_paths, source_name):
         return False
@@ -229,13 +245,15 @@ def _evaluation_is_current(
     metrics_file: Path,
     predictions_file: Path,
     patch_metrics_file: Path,
+    probabilities_file: Path,
     fingerprint: dict[str, Any],
 ) -> bool:
-    """Indica se os três artefatos da dobra existem e correspondem ao fingerprint."""
+    """Indica se os quatro artefatos da dobra existem e correspondem ao fingerprint."""
     from src import io
 
     if not all(
-        io.path_exists(path) for path in (metrics_file, predictions_file, patch_metrics_file)
+        io.path_exists(path)
+        for path in (metrics_file, predictions_file, patch_metrics_file, probabilities_file)
     ):
         return False
     try:
@@ -269,6 +287,37 @@ def _persist_predictions(path: Path, patch_ids: np.ndarray, predictions: np.ndar
     buffer = stdlib_io.BytesIO()
     np.savez_compressed(buffer, patch_ids=np.asarray(patch_ids, dtype=str), predictions=predictions)
     io.persist_bytes(path, buffer.getvalue())
+
+
+def _persist_probability_histograms(
+    path: Path, patch_ids: np.ndarray, positive: np.ndarray, negative: np.ndarray
+) -> None:
+    """Persiste os histogramas de probabilidade por patch (café e não-café válidos)."""
+    from src import io
+
+    buffer = stdlib_io.BytesIO()
+    np.savez_compressed(
+        buffer,
+        patch_ids=np.asarray(patch_ids, dtype=str),
+        positive=np.asarray(positive, dtype=np.int64),
+        negative=np.asarray(negative, dtype=np.int64),
+    )
+    io.persist_bytes(path, buffer.getvalue())
+
+
+def load_probability_histograms(
+    storage_paths: dict[str, Path], model_name: str, source_name: str, fold: int
+) -> dict[str, np.ndarray]:
+    """Carrega os histogramas de probabilidade da dobra (ids, café e não-café)."""
+    from src import io
+
+    path = probabilities_path(storage_paths, model_name, source_name, fold)
+    if not io.path_exists(path):
+        raise FileNotFoundError(
+            f"Histogramas de probabilidade não encontrados: {path}. Reexecute o estágio 11."
+        )
+    with np.load(io.ensure_local_copy(path), allow_pickle=False) as data:
+        return {key: np.asarray(data[key]) for key in ("patch_ids", "positive", "negative")}
 
 
 def _persist_patch_metrics(path: Path, rows: list[dict[str, Any]]) -> None:
@@ -317,10 +366,11 @@ def evaluate_fold(
     metrics_file = evaluation_metrics_path(storage_paths, model_name, source, fold)
     predictions_file = predictions_path(storage_paths, model_name, source, fold)
     patch_file = patch_metrics_path(storage_paths, model_name, source, fold)
+    probabilities_file = probabilities_path(storage_paths, model_name, source, fold)
     fingerprint = evaluation_fingerprint(storage_paths, model_name, source, fold, threshold)
 
     if not force and _evaluation_is_current(
-        metrics_file, predictions_file, patch_file, fingerprint
+        metrics_file, predictions_file, patch_file, probabilities_file, fingerprint
     ):
         payload = json.loads(io.ensure_local_copy(metrics_file).read_text(encoding="utf-8"))
         print(
@@ -339,6 +389,8 @@ def evaluate_fold(
             metrics_path=metrics_file,
             predictions_path=predictions_file,
             patch_metrics_path=patch_file,
+            probabilities_path=probabilities_file,
+            average_precision=payload.get("average_precision"),
             skipped=True,
         )
 
@@ -357,6 +409,8 @@ def evaluate_fold(
     total_fn = 0
     rows: list[dict[str, Any]] = []
     predictions: list[np.ndarray] = []
+    positive_histograms: list[np.ndarray] = []
+    negative_histograms: list[np.ndarray] = []
     offset = 0
     with torch.inference_mode():
         for images, targets in loader:
@@ -365,10 +419,24 @@ def evaluate_fold(
             logits = model(images)
             valid = targets >= 0
             truth = (targets > 0.5) & valid
-            predicted = (torch.sigmoid(logits) >= threshold) & valid
+            probabilities = torch.sigmoid(logits)
+            predicted = (probabilities >= threshold) & valid
             predicted_np = predicted.squeeze(1).cpu().numpy().astype(np.uint8)
             truth_np = truth.squeeze(1).cpu().numpy()
+            bins = probability_bins(probabilities.float()).squeeze(1)
+            truth_flat = truth.squeeze(1)
+            negative_flat = (valid & ~truth).squeeze(1)
             for index in range(predicted_np.shape[0]):
+                positive_histograms.append(
+                    torch.bincount(bins[index][truth_flat[index]], minlength=PROBABILITY_BINS)
+                    .cpu()
+                    .numpy()
+                )
+                negative_histograms.append(
+                    torch.bincount(bins[index][negative_flat[index]], minlength=PROBABILITY_BINS)
+                    .cpu()
+                    .numpy()
+                )
                 record = fold_records.iloc[offset + index]
                 tp = int(np.count_nonzero(predicted_np[index] & truth_np[index]))
                 fp = int(np.count_nonzero(predicted_np[index] & ~truth_np[index]))
@@ -401,6 +469,9 @@ def evaluate_fold(
         "precision": precision(total_tp, total_fp),
         "recall": recall(total_tp, total_fn),
     }
+    positive_stack = np.stack(positive_histograms, axis=0)
+    negative_stack = np.stack(negative_histograms, axis=0)
+    ap = average_precision(positive_stack.sum(axis=0), negative_stack.sum(axis=0))
     payload = {
         "schema_version": EVALUATION_SCHEMA_VERSION,
         "model": model_name,
@@ -410,12 +481,19 @@ def evaluate_fold(
         "n_patches": int(len(fold_records)),
         "counts": counts,
         "metrics": metrics,
+        "average_precision": ap,
         "fingerprint": fingerprint,
     }
     _persist_predictions(
         predictions_file,
         fold_records["patch_id"].astype(str).to_numpy(),
         np.stack(predictions, axis=0),
+    )
+    _persist_probability_histograms(
+        probabilities_file,
+        fold_records["patch_id"].astype(str).to_numpy(),
+        positive_stack,
+        negative_stack,
     )
     _persist_patch_metrics(patch_file, rows)
     io.persist_json(metrics_file, payload)
@@ -436,6 +514,8 @@ def evaluate_fold(
         metrics_path=metrics_file,
         predictions_path=predictions_file,
         patch_metrics_path=patch_file,
+        probabilities_path=probabilities_file,
+        average_precision=ap,
         skipped=False,
     )
 
@@ -503,6 +583,7 @@ def summarize_model(
                 "n_patches": item.n_patches,
                 "counts": dict(item.counts),
                 "metrics": dict(item.metrics),
+                "average_precision": item.average_precision,
                 "weights_sha256": item.fingerprint["weights_sha256"],
             }
             for item in ordered
@@ -555,35 +636,38 @@ def save_evaluation_figure(
     source_name: str,
     summary: dict[str, Any],
 ) -> Path:
-    """Persiste a figura de avaliação do modelo/fonte (regenerada a cada execução)."""
-    from src import io
-
+    """Persiste a figura de avaliação do modelo/fonte em PNG e PDF (regenerada a cada execução)."""
     frames = [
         load_patch_metrics(storage_paths, model_name, source_name, item["fold"])
         for item in summary["per_fold"]
     ]
     patch_metrics = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
-    figure_path = evaluation_figure_path(storage_paths, model_name, source_name)
-    io.persist_bytes(figure_path, render_evaluation_figure(summary, patch_metrics))
+    figure_path = figstyle.persist_figure(
+        evaluation_figure_path(storage_paths, model_name, source_name),
+        render_evaluation_figure(summary, patch_metrics),
+    )
     print(f"Figura salva em: {figure_path}")
     return figure_path
 
 
-def render_evaluation_figure(summary: dict[str, Any], patch_metrics: pd.DataFrame) -> bytes:
-    """Renderiza métricas por dobra, IoU por patch e relação com café/área válida."""
-    from src.data.raster_utils import render_figure
-
+def render_evaluation_figure(
+    summary: dict[str, Any], patch_metrics: pd.DataFrame
+) -> dict[str, bytes]:
+    """Métricas por dobra, distribuição do IoU e sua relação com café e área válida."""
     per_fold = summary["per_fold"]
+    model_name = str(summary.get("model", "unet"))
+    color = figstyle.MODEL_COLORS.get(model_name, "#1565c0")
+    label = figstyle.MODEL_LABELS.get(model_name, model_name)
     coffee_patches = (
         patch_metrics[patch_metrics["tp"] + patch_metrics["fn"] > 0]
         if not patch_metrics.empty
         else patch_metrics
     )
+    metric_colors = ("#0072b2", "#009e73", "#e69f00", "#cc79a7")
 
-    def _build(plt: Any) -> Any:
-        figure, axes = plt.subplots(2, 2, figsize=(14, 10))
-        fold_labels = [str(item["fold"]) for item in per_fold]
-        positions = np.arange(len(fold_labels))
+    def _build(plt: Any, figure: Any) -> None:
+        axes = figure.subplots(2, 2)
+        positions = np.arange(len(per_fold))
         width = 0.8 / len(METRIC_KEYS)
         for index, key in enumerate(METRIC_KEYS):
             offset = (index - (len(METRIC_KEYS) - 1) / 2) * width
@@ -591,36 +675,41 @@ def render_evaluation_figure(summary: dict[str, Any], patch_metrics: pd.DataFram
                 positions + offset,
                 [item["metrics"][key] for item in per_fold],
                 width=width,
-                label=key,
+                color=metric_colors[index],
+                label=figstyle.METRIC_LABELS[key],
             )
-        axes[0, 0].set_xticks(positions, fold_labels)
-        axes[0, 0].set_ylim(0.0, 1.05)
-        axes[0, 0].set_title("Métricas por dobra (validação espacial)")
-        axes[0, 0].set_xlabel("dobra")
-        axes[0, 0].set_ylabel("valor")
-        axes[0, 0].legend()
+        axes[0, 0].set_xticks(positions, [str(item["fold"]) for item in per_fold])
+        axes[0, 0].set_ylim(0.0, 1.0)
+        axes[0, 0].set_xlabel("Dobra de validação")
+        axes[0, 0].set_ylabel("Valor da métrica")
+        axes[0, 0].set_title(f"{label}: métricas por dobra")
+        axes[0, 0].legend(loc="lower center", ncol=2)
+        figstyle.panel_label(axes[0, 0], "(a)")
 
         if not coffee_patches.empty:
-            axes[0, 1].hist(coffee_patches["iou"], bins=20, color="#1565c0", alpha=0.85)
-        else:
-            axes[0, 1].text(0.5, 0.5, "sem patches com café", ha="center", va="center")
-            axes[0, 1].set_axis_off()
-        axes[0, 1].set_title("IoU por patch (patches com café)")
-        axes[0, 1].set_xlabel("IoU")
-        axes[0, 1].set_ylabel("patches")
+            axes[0, 1].hist(coffee_patches["iou"], bins=20, color=color, alpha=0.85)
+            median = float(coffee_patches["iou"].median())
+            axes[0, 1].axvline(median, color="black", linewidth=1.2, label=f"Mediana {median:.3f}")
+            axes[0, 1].legend(loc="upper left")
+        axes[0, 1].set_xlabel("IoU por recorte")
+        axes[0, 1].set_ylabel("Recortes")
+        axes[0, 1].set_title("Distribuição do IoU (recortes com café)")
+        figstyle.panel_label(axes[0, 1], "(b)")
 
         if not coffee_patches.empty:
             axes[1, 0].scatter(
                 coffee_patches["coffee_ratio"],
                 coffee_patches["iou"],
-                s=14,
-                alpha=0.7,
-                color="#2e7d32",
+                s=10,
+                alpha=0.75,
+                color=color,
+                linewidths=0,
             )
-        axes[1, 0].set_title("IoU vs proporção de café")
-        axes[1, 0].set_xlabel("coffee_ratio")
+        axes[1, 0].set_xlabel("Proporção de café no recorte")
         axes[1, 0].set_ylabel("IoU")
         axes[1, 0].set_ylim(-0.02, 1.02)
+        axes[1, 0].set_title("IoU segundo a densidade de café")
+        figstyle.panel_label(axes[1, 0], "(c)")
 
         if (
             not patch_metrics.empty
@@ -631,16 +720,15 @@ def render_evaluation_figure(summary: dict[str, Any], patch_metrics: pd.DataFram
             axes[1, 1].scatter(
                 valid["valid_fraction"],
                 valid["iou"],
-                s=14,
-                alpha=0.7,
-                color="#f9a825",
+                s=10,
+                alpha=0.75,
+                color=color,
+                linewidths=0,
             )
-        axes[1, 1].set_title("IoU vs fração válida do patch")
-        axes[1, 1].set_xlabel("valid_fraction")
+        axes[1, 1].set_xlabel("Fração de pixels válidos do recorte")
         axes[1, 1].set_ylabel("IoU")
         axes[1, 1].set_ylim(-0.02, 1.02)
+        axes[1, 1].set_title("IoU segundo a área válida")
+        figstyle.panel_label(axes[1, 1], "(d)")
 
-        figure.tight_layout()
-        return figure
-
-    return render_figure(_build)
+    return figstyle.render_publication(_build, height_cm=14.0)

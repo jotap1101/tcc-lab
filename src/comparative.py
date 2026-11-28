@@ -6,10 +6,14 @@ Para cada métrica de pixel (IoU, F1, Precisão, Recall), reporta a diferença
 SegFormer − U-Net, intervalo de confiança bootstrap, teste t pareado, teste de
 Wilcoxon dos postos sinalizados, correção de Holm para as quatro métricas,
 tamanho de efeito (d_z de Cohen e delta de Cliff) e a contagem de patches em que
-cada modelo vence. Também gera a figura comparativa e os mapas de erro
-(TP/FP/FN/ignorado) de patches representativos, persistindo tudo sob a raiz
-canônica tcc/ do Drive. A análise é reutilizada apenas enquanto os fingerprints
-do estágio 11 permanecem vigentes.
+cada modelo vence. Como os patches são espacialmente dependentes, esses testes
+por patch são **descritivos**; a inferência adequada usa blocos espaciais e
+dobras como unidades (`src.spatial_inference`). Uma análise de sensibilidade ao
+limiar (precisão média e limiar calibrado leave-one-fold-out, `src.thresholds`)
+verifica se a conclusão depende da calibração de cada modelo. Também gera a
+figura comparativa e os mapas de erro (TP/FP/FN/ignorado) de patches
+representativos, persistindo tudo sob a raiz canônica tcc/ do Drive. A análise é
+reutilizada apenas enquanto os fingerprints do estágio 11 permanecem vigentes.
 """
 
 from __future__ import annotations
@@ -23,7 +27,7 @@ import numpy as np
 import pandas as pd
 from scipy import stats as scipy_stats
 
-from src import evaluation
+from src import evaluation, figstyle, spatial_inference, thresholds
 from src.config import get_config
 from src.data.mask_utils import reference_year
 from src.data.patch_generation import load_manifest, resolve_from_root
@@ -32,11 +36,11 @@ from src.data.source_decision import chosen_source
 from src.data.spatial_split import fold_count
 from src.evaluation import METRIC_KEYS, MODEL_NAMES
 
-COMPARATIVE_SCHEMA_VERSION = 1
+COMPARATIVE_SCHEMA_VERSION = 2
 BOOTSTRAP_ITERATIONS = 2000
 BOOTSTRAP_CONFIDENCE = 0.95
 COMPARATIVE_DIR_NAME = "comparative"
-MODEL_LABELS = {"unet": "U-Net", "segformer": "SegFormer"}
+MODEL_LABELS = figstyle.MODEL_LABELS
 DIRECTION = "segformer_minus_unet"
 
 TN_CODE, FP_CODE, FN_CODE, TP_CODE, INVALID_CODE = 0, 1, 2, 3, 4
@@ -152,6 +156,10 @@ def summaries_are_current(
                 return False
             if not io.path_exists(
                 evaluation.predictions_path(storage_paths, model_name, source_name, fold)
+            ):
+                return False
+            if not io.path_exists(
+                evaluation.probabilities_path(storage_paths, model_name, source_name, fold)
             ):
                 return False
     return True
@@ -444,13 +452,156 @@ def per_fold_delta(summaries: dict[str, dict[str, Any]]) -> list[dict[str, Any]]
     ]
 
 
+def _model_threshold_analysis(
+    storage_paths: dict[str, Path], model_name: str, source_name: str
+) -> tuple[dict[str, Any], pd.DataFrame]:
+    """Precisão média, curva P×R e métricas sob limiar fixo, calibrado e ótimo (um modelo)."""
+    positive: dict[int, np.ndarray] = {}
+    negative: dict[int, np.ndarray] = {}
+    patches: dict[int, tuple[np.ndarray, np.ndarray, np.ndarray]] = {}
+    for fold in range(fold_count()):
+        histograms = evaluation.load_probability_histograms(
+            storage_paths, model_name, source_name, fold
+        )
+        patches[fold] = (
+            histograms["patch_ids"],
+            histograms["positive"],
+            histograms["negative"],
+        )
+        positive[fold] = histograms["positive"].sum(axis=0)
+        negative[fold] = histograms["negative"].sum(axis=0)
+    pooled_positive = np.sum(list(positive.values()), axis=0)
+    pooled_negative = np.sum(list(negative.values()), axis=0)
+
+    def _metrics(tp: Any, fp: Any, fn: Any) -> dict[str, float]:
+        values = thresholds.metrics_from_counts(np.asarray(tp), np.asarray(fp), np.asarray(fn))
+        return {key: float(values[key]) for key in METRIC_KEYS}
+
+    fixed_bin = thresholds.DEFAULT_THRESHOLD_BIN
+    fixed_counts = thresholds.counts_per_patch_at_bin(
+        pooled_positive[None, :], pooled_negative[None, :], fixed_bin
+    )
+    oracle_bin = thresholds.best_threshold_bin(pooled_positive, pooled_negative, "iou")
+    oracle_counts = thresholds.counts_per_patch_at_bin(
+        pooled_positive[None, :], pooled_negative[None, :], oracle_bin
+    )
+    chosen = thresholds.leave_one_fold_out_bins(positive, negative, "iou")
+
+    rows: list[dict[str, Any]] = []
+    fold_rows: list[dict[str, Any]] = []
+    for fold in range(fold_count()):
+        ids, pos, neg = patches[fold]
+        counts = thresholds.counts_per_patch_at_bin(pos, neg, chosen[fold])
+        patch_values = thresholds.metrics_from_counts(counts["tp"], counts["fp"], counts["fn"])
+        for index, patch_id in enumerate(ids):
+            rows.append(
+                {
+                    "patch_id": str(patch_id),
+                    "fold": fold,
+                    **{
+                        f"{key}_{model_name}": float(patch_values[key][index])
+                        for key in METRIC_KEYS
+                    },
+                }
+            )
+        fold_rows.append(
+            {
+                "fold": fold,
+                "threshold": thresholds.threshold_value(chosen[fold]),
+                "metrics": _metrics(counts["tp"].sum(), counts["fp"].sum(), counts["fn"].sum()),
+            }
+        )
+    calibrated_totals = {
+        key: sum(
+            int(
+                thresholds.counts_per_patch_at_bin(
+                    patches[fold][1], patches[fold][2], chosen[fold]
+                )[key].sum()
+            )
+            for fold in range(fold_count())
+        )
+        for key in ("tp", "fp", "fn")
+    }
+    analysis = {
+        "average_precision": thresholds.average_precision(pooled_positive, pooled_negative),
+        "average_precision_per_fold": {
+            str(fold): thresholds.average_precision(positive[fold], negative[fold])
+            for fold in range(fold_count())
+        },
+        "pr_curve": thresholds.precision_recall_curve(pooled_positive, pooled_negative),
+        "fixed": {
+            "threshold": thresholds.threshold_value(fixed_bin),
+            "metrics": _metrics(
+                fixed_counts["tp"].sum(), fixed_counts["fp"].sum(), fixed_counts["fn"].sum()
+            ),
+        },
+        "oracle": {
+            "threshold": thresholds.threshold_value(oracle_bin),
+            "metrics": _metrics(
+                oracle_counts["tp"].sum(), oracle_counts["fp"].sum(), oracle_counts["fn"].sum()
+            ),
+        },
+        "calibrated": {
+            "criterion": "iou",
+            "scheme": "leave_one_fold_out",
+            "aggregate": _metrics(
+                calibrated_totals["tp"], calibrated_totals["fp"], calibrated_totals["fn"]
+            ),
+            "per_fold": fold_rows,
+            "fold_mean": {
+                key: float(np.mean([item["metrics"][key] for item in fold_rows]))
+                for key in METRIC_KEYS
+            },
+            "fold_std": {
+                key: float(np.std([item["metrics"][key] for item in fold_rows]))
+                for key in METRIC_KEYS
+            },
+        },
+    }
+    return analysis, pd.DataFrame(rows)
+
+
+def threshold_sensitivity(
+    storage_paths: dict[str, Path], source_name: str, seed: int
+) -> dict[str, Any]:
+    """Compara os modelos sem depender do limiar fixo de 0,5 (AP e limiar calibrado).
+
+    O limiar de cada dobra é escolhido apenas nas outras dobras (sem vazamento);
+    as diferenças por patch sob esses limiares alimentam a mesma inferência por
+    blocos e dobras da comparação principal.
+    """
+    analyses: dict[str, Any] = {}
+    frames: list[pd.DataFrame] = []
+    for model_name in MODEL_NAMES:
+        analyses[model_name], frame = _model_threshold_analysis(
+            storage_paths, model_name, source_name
+        )
+        frames.append(frame)
+    merged = frames[0].merge(frames[1], on=["patch_id", "fold"], validate="one_to_one")
+    calibrated = analyses["segformer"]["calibrated"]["aggregate"]
+    baseline = analyses["unet"]["calibrated"]["aggregate"]
+    return {
+        "bins": thresholds.PROBABILITY_BINS,
+        "models": analyses,
+        "average_precision_delta": float(
+            analyses["segformer"]["average_precision"] - analyses["unet"]["average_precision"]
+        ),
+        "calibrated_delta": {
+            metric: float(calibrated[metric] - baseline[metric]) for metric in METRIC_KEYS
+        },
+        "inference_calibrated": spatial_inference.spatial_inference(merged, METRIC_KEYS, seed=seed),
+    }
+
+
 def build_comparison_payload(
     patch_metrics: pd.DataFrame,
     summaries: dict[str, dict[str, Any]],
     source_name: str,
     fingerprint: dict[str, Any],
+    storage_paths: dict[str, Path] | None = None,
 ) -> dict[str, Any]:
     """Monta o payload consolidado da comparação entre os dois modelos."""
+    base_seed = int(get_config()["reproducibility"]["seed"])
     models = {
         model_name: {
             "aggregate": summaries[model_name]["aggregate"],
@@ -479,6 +630,14 @@ def build_comparison_payload(
         "aggregate_delta": aggregate_delta(summaries),
         "per_fold_delta": per_fold_delta(summaries),
         "paired": paired_comparison(patch_metrics),
+        "spatial_inference": spatial_inference.spatial_inference(
+            patch_metrics, METRIC_KEYS, seed=base_seed
+        ),
+        "threshold_sensitivity": (
+            threshold_sensitivity(storage_paths, source_name, base_seed)
+            if storage_paths is not None
+            else None
+        ),
         "bootstrap": {
             "iterations": BOOTSTRAP_ITERATIONS,
             "confidence": BOOTSTRAP_CONFIDENCE,
@@ -518,7 +677,9 @@ def analyze_comparison(
             summary_path=target,
             skipped=True,
         )
-    payload = build_comparison_payload(patch_metrics, summaries, source, fingerprint)
+    payload = build_comparison_payload(
+        patch_metrics, summaries, source, fingerprint, storage_paths=storage_paths
+    )
     io.persist_json(target, payload)
     print(
         f"Comparação concluída: {payload['n_patches']} patches | "
@@ -533,75 +694,123 @@ def analyze_comparison(
     )
 
 
-def render_comparison_figure(payload: dict[str, Any], patch_metrics: pd.DataFrame) -> bytes:
-    """Renderiza distribuições, dobras, dispersão e histograma da diferença de IoU."""
-    from src.data.raster_utils import render_figure
+def _jitter(count: int, seed: int, width: float = 0.12) -> np.ndarray:
+    """Deslocamento horizontal determinístico para pontos sobrepostos."""
+    return np.random.default_rng(seed).uniform(-width, width, size=count)
 
-    per_fold = payload["models"]["unet"]["per_fold"]
+
+def render_comparison_figure(
+    payload: dict[str, Any], patch_metrics: pd.DataFrame
+) -> dict[str, bytes]:
+    """Distribuição do IoU, IoU por dobra, dispersão pareada e diferença com IC por blocos."""
     coffee = patch_metrics[patch_metrics["truth_positive"]]
     if coffee.empty:
         coffee = patch_metrics
+    block = payload["spatial_inference"]["block_level"]["iou"]
 
-    def _build(plt: Any) -> Any:
-        figure, axes = plt.subplots(2, 2, figsize=(14, 10))
+    def _build(plt: Any, figure: Any) -> None:
+        axes = figure.subplots(2, 2)
 
-        values = [coffee[f"iou_{model_name}"].to_numpy() for model_name in MODEL_NAMES]
-        axes[0, 0].boxplot(values)
-        axes[0, 0].set_xticks([1, 2], [MODEL_LABELS[model_name] for model_name in MODEL_NAMES])
-        axes[0, 0].set_title("IoU por patch (patches com café)")
-        axes[0, 0].set_ylabel("IoU")
-        axes[0, 0].set_ylim(-0.02, 1.02)
+        # (a) distribuição do IoU por patch, com a mediana e todos os pontos
+        axis = axes[0, 0]
+        for position, model_name in enumerate(MODEL_NAMES, start=1):
+            values = coffee[f"iou_{model_name}"].to_numpy()
+            color = figstyle.MODEL_COLORS[model_name]
+            axis.boxplot(
+                values,
+                positions=[position],
+                widths=0.5,
+                showfliers=False,
+                medianprops={"color": "black", "linewidth": 1.4},
+                boxprops={"color": color},
+                whiskerprops={"color": color},
+                capprops={"color": color},
+            )
+            axis.scatter(
+                position + _jitter(len(values), position, 0.18),
+                values,
+                s=7,
+                color=color,
+                alpha=0.45,
+                linewidths=0,
+                zorder=3,
+            )
+        axis.set_xticks([1, 2], [MODEL_LABELS[name] for name in MODEL_NAMES])
+        axis.set_ylabel("IoU por recorte")
+        axis.set_ylim(-0.02, 1.02)
+        axis.set_title(f"IoU por recorte (n = {len(coffee)})")
+        figstyle.panel_label(axis, "(a)")
 
-        folds = [str(int(item["fold"])) for item in per_fold]
+        # (b) IoU agregado por dobra, cada modelo com os próprios valores
+        axis = axes[0, 1]
+        folds = [int(item["fold"]) for item in payload["models"]["unet"]["per_fold"]]
         positions = np.arange(len(folds))
         width = 0.38
         for offset, model_name in zip((-width / 2, width / 2), MODEL_NAMES, strict=True):
-            values = [item["metrics"]["iou"] for item in per_fold]
-            axes[0, 1].bar(
+            per_fold = payload["models"][model_name]["per_fold"]
+            axis.bar(
                 positions + offset,
-                values,
+                [item["metrics"]["iou"] for item in per_fold],
                 width=width,
+                color=figstyle.MODEL_COLORS[model_name],
                 label=MODEL_LABELS[model_name],
             )
-        axes[0, 1].set_xticks(positions, folds)
-        axes[0, 1].set_ylim(0.0, 1.05)
-        axes[0, 1].set_title("IoU agregado por dobra")
-        axes[0, 1].set_xlabel("dobra")
-        axes[0, 1].set_ylabel("IoU")
-        axes[0, 1].legend()
+        axis.set_xticks(positions, [str(fold) for fold in folds])
+        axis.set_xlabel("Dobra de validação")
+        axis.set_ylabel("IoU agregado da dobra")
+        axis.set_ylim(0.0, 1.18)
+        axis.set_yticks([0, 0.2, 0.4, 0.6, 0.8, 1.0])
+        axis.set_title("IoU por dobra espacial")
+        axis.legend(loc="upper center", ncol=2)
+        figstyle.panel_label(axis, "(b)")
 
-        scatter = axes[1, 0].scatter(
+        # (c) dispersão pareada, colorida pela proporção de café
+        axis = axes[1, 0]
+        scatter = axis.scatter(
             coffee["iou_unet"],
             coffee["iou_segformer"],
             c=coffee["coffee_ratio"],
             cmap="viridis",
-            s=16,
-            alpha=0.8,
+            s=11,
+            alpha=0.85,
+            linewidths=0,
         )
-        axes[1, 0].plot([0.0, 1.0], [0.0, 1.0], linestyle="--", color="gray", linewidth=1)
-        axes[1, 0].set_xlim(-0.02, 1.02)
-        axes[1, 0].set_ylim(-0.02, 1.02)
-        axes[1, 0].set_xlabel("IoU U-Net")
-        axes[1, 0].set_ylabel("IoU SegFormer")
-        axes[1, 0].set_title("IoU por patch: U-Net vs SegFormer")
-        figure.colorbar(scatter, ax=axes[1, 0], label="coffee_ratio")
+        axis.plot([0, 1], [0, 1], linestyle="--", color="gray", linewidth=1)
+        axis.set_xlim(-0.02, 1.02)
+        axis.set_ylim(-0.02, 1.02)
+        axis.set_aspect("equal", adjustable="box")
+        axis.set_xlabel("IoU da U-Net")
+        axis.set_ylabel("IoU do SegFormer")
+        axis.set_title("Pares de recortes")
+        axis.text(
+            0.05, 0.93, "SegFormer melhor", fontsize=7, color="gray", transform=axis.transAxes
+        )
+        axis.text(0.55, 0.05, "U-Net melhor", fontsize=7, color="gray", transform=axis.transAxes)
+        figure.colorbar(scatter, ax=axis, shrink=0.8, label="Proporção de café")
+        figstyle.panel_label(axis, "(c)")
 
+        # (d) diferença de IoU com a média e o IC 95% por bootstrap de blocos
+        axis = axes[1, 1]
         difference = (coffee["iou_segformer"] - coffee["iou_unet"]).to_numpy()
-        axes[1, 1].hist(difference, bins=30, color="#6a1b9a", alpha=0.8)
-        axes[1, 1].axvline(0.0, color="black", linewidth=1)
-        axes[1, 1].axvline(
-            float(np.mean(difference)), color="#e53935", linewidth=1.5, label="média"
-        )
-        axes[1, 1].set_title("Distribuição da diferença de IoU (SegFormer − U-Net)")
-        axes[1, 1].set_xlabel("diferença de IoU")
-        axes[1, 1].set_ylabel("patches")
-        axes[1, 1].legend()
+        axis.hist(difference, bins=25, color=figstyle.MODEL_COLORS["segformer"], alpha=0.8)
+        axis.axvline(0.0, color="black", linewidth=1)
+        mean = float(block["mean_difference"])
+        axis.axvline(mean, color=figstyle.COLOR_ACCENT, linewidth=1.5, label=f"Média {mean:+.3f}")
+        if block["ci95_low"] is not None:
+            axis.axvspan(
+                float(block["ci95_low"]),
+                float(block["ci95_high"]),
+                color=figstyle.COLOR_ACCENT,
+                alpha=0.18,
+                label="IC 95% (blocos espaciais)",
+            )
+        axis.set_xlabel("Δ IoU (SegFormer − U-Net)")
+        axis.set_ylabel("Recortes")
+        axis.set_title("Diferença pareada")
+        axis.legend(loc="upper left")
+        figstyle.panel_label(axis, "(d)")
 
-        figure.suptitle("Comparação U-Net vs SegFormer (validação espacial)", fontsize=13)
-        figure.tight_layout(rect=(0, 0, 1, 0.97))
-        return figure
-
-    return render_figure(_build)
+    return figstyle.render_publication(_build, height_cm=14.5)
 
 
 def save_comparison_figure(
@@ -610,12 +819,186 @@ def save_comparison_figure(
     payload: dict[str, Any],
     patch_metrics: pd.DataFrame,
 ) -> Path:
-    """Persiste a figura comparativa (regenerada a cada execução)."""
-    from src import io
-
-    figure_path = comparison_figure_path(storage_paths, source_name)
-    io.persist_bytes(figure_path, render_comparison_figure(payload, patch_metrics))
+    """Persiste a figura comparativa em PNG e PDF (regenerada a cada execução)."""
+    figure_path = figstyle.persist_figure(
+        comparison_figure_path(storage_paths, source_name),
+        render_comparison_figure(payload, patch_metrics),
+    )
     print(f"Figura comparativa salva em: {figure_path}")
+    return figure_path
+
+
+def inference_figure_file_name(source_name: str) -> str:
+    """Nome estável da figura de inferência estatística (floresta de IC)."""
+    config = get_config()
+    return (
+        f"inference_{config['aoi']['region_code']}_{reference_year(source_name)}_{source_name}.png"
+    )
+
+
+def inference_figure_path(storage_paths: dict[str, Path], source_name: str) -> Path:
+    """Caminho da figura de inferência estatística."""
+    return storage_paths["artifacts_figures"] / inference_figure_file_name(source_name)
+
+
+def render_inference_figure(payload: dict[str, Any]) -> dict[str, bytes]:
+    """Floresta de IC 95% da diferença (SegFormer − U-Net) por nível de inferência.
+
+    Compara o IC bootstrap por patch (descritivo, subestima a incerteza), o IC por
+    blocos espaciais (inferência principal) e o IC por dobras (n = 5, t de Student).
+    """
+    metrics = list(METRIC_KEYS)
+    spatial = payload["spatial_inference"]
+    levels = (
+        ("Patches (descritivo)", "#9e9e9e", lambda m: payload["paired"][m]),
+        (
+            "Blocos espaciais",
+            figstyle.MODEL_COLORS["segformer"],
+            lambda m: spatial["block_level"][m],
+        ),
+        ("Dobras (t, n = 5)", "#e69f00", lambda m: spatial["fold_level"][m]),
+    )
+
+    def _build(plt: Any, figure: Any) -> None:
+        axis = figure.subplots()
+        height = 0.22
+        for row, metric in enumerate(metrics):
+            for level, (label, color, getter) in enumerate(levels):
+                stats = getter(metric)
+                mean = stats.get("mean_difference")
+                low, high = stats.get("ci95_low"), stats.get("ci95_high")
+                if mean is None or low is None or high is None:
+                    continue
+                y = row + (level - 1) * height
+                axis.errorbar(
+                    float(mean),
+                    y,
+                    xerr=[
+                        [max(0.0, float(mean) - float(low))],
+                        [max(0.0, float(high) - float(mean))],
+                    ],
+                    fmt="o",
+                    color=color,
+                    capsize=3,
+                    markersize=4,
+                    label=label if row == 0 else None,
+                )
+        axis.axvline(0.0, color="black", linewidth=1)
+        axis.set_yticks(range(len(metrics)), [figstyle.METRIC_LABELS[m] for m in metrics])
+        axis.invert_yaxis()
+        axis.set_xlabel("Diferença média (SegFormer − U-Net) com IC 95%")
+        axis.set_title("Incerteza da diferença segundo a unidade de análise")
+        handles, labels = axis.get_legend_handles_labels()
+        figure.legend(handles, labels, loc="outside lower center", ncol=3)
+
+    return figstyle.render_publication(_build, height_cm=8.5)
+
+
+def save_inference_figure(
+    storage_paths: dict[str, Path], source_name: str, payload: dict[str, Any]
+) -> Path:
+    """Persiste a figura de inferência estatística em PNG e PDF."""
+    figure_path = figstyle.persist_figure(
+        inference_figure_path(storage_paths, source_name), render_inference_figure(payload)
+    )
+    print(f"Figura de inferência salva em: {figure_path}")
+    return figure_path
+
+
+def threshold_figure_file_name(source_name: str) -> str:
+    """Nome estável da figura de sensibilidade ao limiar."""
+    config = get_config()
+    return (
+        f"threshold_{config['aoi']['region_code']}_{reference_year(source_name)}_{source_name}.png"
+    )
+
+
+def threshold_figure_path(storage_paths: dict[str, Path], source_name: str) -> Path:
+    """Caminho da figura de sensibilidade ao limiar."""
+    return storage_paths["artifacts_figures"] / threshold_figure_file_name(source_name)
+
+
+def render_threshold_figure(payload: dict[str, Any]) -> dict[str, bytes]:
+    """Curvas P×R e IoU×limiar dos modelos, com o limiar fixo (0,5) e o calibrado."""
+    sensitivity = payload["threshold_sensitivity"]
+    if sensitivity is None:
+        raise ValueError("Comparação sem análise de sensibilidade ao limiar.")
+
+    def _build(plt: Any, figure: Any) -> None:
+        axes = figure.subplots(1, 2)
+        for model_name in MODEL_NAMES:
+            analysis = sensitivity["models"][model_name]
+            color = figstyle.MODEL_COLORS[model_name]
+            curve = analysis["pr_curve"]
+            label = f"{MODEL_LABELS[model_name]} (AP = {analysis['average_precision']:.3f})"
+            axes[0].plot(curve["recall"], curve["precision"], color=color, label=label)
+            fixed = analysis["fixed"]["metrics"]
+            axes[0].scatter(
+                [fixed["recall"]], [fixed["precision"]], color=color, marker="o", s=26, zorder=4
+            )
+            axes[1].plot(
+                curve["threshold"], curve["iou"], color=color, label=MODEL_LABELS[model_name]
+            )
+            axes[1].scatter(
+                [analysis["fixed"]["threshold"]],
+                [fixed["iou"]],
+                color=color,
+                marker="o",
+                s=26,
+                zorder=4,
+            )
+            axes[1].scatter(
+                [analysis["oracle"]["threshold"]],
+                [analysis["oracle"]["metrics"]["iou"]],
+                color=color,
+                marker="*",
+                s=60,
+                zorder=4,
+            )
+        axes[0].set_xlabel("Revocação")
+        axes[0].set_ylabel("Precisão")
+        axes[0].set_xlim(0, 1)
+        axes[0].set_ylim(0, 1.02)
+        axes[0].set_title("Curva precisão × revocação")
+        axes[0].legend(loc="lower left")
+        axes[0].text(
+            0.98,
+            0.98,
+            "● limiar 0,5",
+            transform=axes[0].transAxes,
+            ha="right",
+            va="top",
+            fontsize=7,
+        )
+        axes[1].set_xlabel("Limiar de probabilidade")
+        axes[1].set_ylabel("IoU agregado")
+        axes[1].set_xlim(0, 1)
+        axes[1].set_ylim(0, 1)
+        axes[1].set_title("IoU em função do limiar")
+        axes[1].legend(loc="lower center")
+        axes[1].text(
+            0.98,
+            0.98,
+            "● limiar 0,5\n★ limiar ótimo",
+            transform=axes[1].transAxes,
+            ha="right",
+            va="top",
+            fontsize=7,
+        )
+        figstyle.panel_label(axes[0], "(a)")
+        figstyle.panel_label(axes[1], "(b)")
+
+    return figstyle.render_publication(_build, height_cm=7.5)
+
+
+def save_threshold_figure(
+    storage_paths: dict[str, Path], source_name: str, payload: dict[str, Any]
+) -> Path:
+    """Persiste a figura de sensibilidade ao limiar em PNG e PDF."""
+    figure_path = figstyle.persist_figure(
+        threshold_figure_path(storage_paths, source_name), render_threshold_figure(payload)
+    )
+    print(f"Figura de sensibilidade ao limiar salva em: {figure_path}")
     return figure_path
 
 
@@ -737,52 +1120,58 @@ def build_error_map_samples(
     return samples
 
 
-def render_error_maps_figure(samples: list[ErrorMapSample]) -> bytes:
-    """Renderiza, por patch, RGB, referência e mapas de erro dos dois modelos."""
+def render_error_maps_figure(samples: list[ErrorMapSample]) -> dict[str, bytes]:
+    """Por recorte: imagem RGB, referência e mapas de erro dos dois modelos."""
     from matplotlib.colors import BoundaryNorm, ListedColormap
     from matplotlib.patches import Patch
-
-    from src.data.raster_utils import render_figure
 
     if not samples:
         raise ValueError("Nenhuma amostra disponível para os mapas de erro.")
     error_cmap = ListedColormap(ERROR_COLORS)
     error_norm = BoundaryNorm(np.arange(-0.5, 5.5, 1.0), error_cmap.N)
-    truth_cmap = ListedColormap(["#f5f5f5", "#2e7d32", "#000000"])
+    truth_cmap = ListedColormap(["#f5f5f5", "#2e7d32", "#ffffff"])
+    columns = ["Imagem (RGB)", "Referência", *[MODEL_LABELS[name] for name in MODEL_NAMES]]
+    row_height_cm = 3.9
 
-    def _build(plt: Any) -> Any:
-        figure, axes = plt.subplots(
-            len(samples), 4, figsize=(16, 4.2 * len(samples)), squeeze=False
-        )
+    def _build(plt: Any, figure: Any) -> None:
+        axes = figure.subplots(len(samples), 4, squeeze=False)
         for row, sample in enumerate(samples):
             truth_code = np.where(sample.valid, sample.truth.astype(np.uint8), 2)
             axes[row, 0].imshow(sample.image_rgb)
-            axes[row, 0].set_title(
-                f"{sample.label}\n{sample.patch_id} (dobra {sample.fold})", fontsize=9
-            )
             axes[row, 1].imshow(truth_code, cmap=truth_cmap, vmin=0, vmax=2)
-            axes[row, 1].set_title("Referência", fontsize=9)
             for column, model_name in enumerate(MODEL_NAMES, start=2):
                 codes = error_code_map(sample.predictions[model_name], sample.truth, sample.valid)
                 axes[row, column].imshow(
                     codes, cmap=error_cmap, norm=error_norm, interpolation="nearest"
                 )
-                axes[row, column].set_title(
-                    f"Erro {MODEL_LABELS[model_name]} (IoU {sample.iou[model_name]:.3f})",
-                    fontsize=9,
+                axes[row, column].text(
+                    0.02,
+                    0.02,
+                    f"IoU {sample.iou[model_name]:.3f}",
+                    transform=axes[row, column].transAxes,
+                    fontsize=7,
+                    bbox={"facecolor": "white", "edgecolor": "none", "alpha": 0.85, "pad": 1.5},
                 )
+            axes[row, 0].set_ylabel(
+                f"{figstyle.wrap_label(sample.label)}\n(dobra {sample.fold})",
+                fontsize=6.5,
+                labelpad=4,
+            )
             for axis in axes[row]:
-                axis.axis("off")
+                axis.set_xticks([])
+                axis.set_yticks([])
+                axis.grid(False)
+                for spine in axis.spines.values():
+                    spine.set_visible(False)
+        for column, title in enumerate(columns):
+            axes[0, column].set_title(title)
         handles = [
-            Patch(facecolor=color, edgecolor="black", label=label)
-            for color, label in zip(ERROR_COLORS, ERROR_LABELS, strict=True)
+            Patch(facecolor=color, edgecolor="#555555", label=label)
+            for color, label in zip(ERROR_COLORS[:4], ERROR_LABELS[:4], strict=True)
         ]
-        figure.legend(handles=handles, loc="lower center", ncol=5, fontsize=9)
-        figure.suptitle("Mapas de erro: U-Net vs SegFormer", fontsize=13)
-        figure.tight_layout(rect=(0, 0.04, 1, 0.97))
-        return figure
+        figure.legend(handles=handles, loc="outside lower center", ncol=4)
 
-    return render_figure(_build)
+    return figstyle.render_publication(_build, height_cm=row_height_cm * len(samples) + 2.2)
 
 
 def save_error_maps_figure(
@@ -790,11 +1179,10 @@ def save_error_maps_figure(
     source_name: str,
     selected: list[dict[str, Any]],
 ) -> Path:
-    """Persiste a figura de mapas de erro (regenerada a cada execução)."""
-    from src import io
-
+    """Persiste a figura de mapas de erro em PNG e PDF (regenerada a cada execução)."""
     samples = build_error_map_samples(storage_paths, source_name, selected)
-    figure_path = error_maps_figure_path(storage_paths, source_name)
-    io.persist_bytes(figure_path, render_error_maps_figure(samples))
+    figure_path = figstyle.persist_figure(
+        error_maps_figure_path(storage_paths, source_name), render_error_maps_figure(samples)
+    )
     print(f"Mapas de erro salvos em: {figure_path}")
     return figure_path

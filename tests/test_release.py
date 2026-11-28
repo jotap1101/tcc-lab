@@ -116,7 +116,7 @@ def _summary(
         )
     values = {key: [item["metrics"][key] for item in per_fold] for key in evaluation.METRIC_KEYS}
     return {
-        "schema_version": 1,
+        "schema_version": evaluation.EVALUATION_SCHEMA_VERSION,
         "model": model_name,
         "source_name": source,
         "threshold": evaluation.DEFAULT_THRESHOLD,

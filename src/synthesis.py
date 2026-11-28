@@ -21,7 +21,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from src import comparative, evaluation, trainer
+from src import comparative, evaluation, figstyle, trainer
 from src.config import get_config
 from src.data.mask_utils import reference_year
 from src.data.patch_generation import (
@@ -34,10 +34,10 @@ from src.data.source_decision import chosen_source
 from src.data.spatial_split import fold_count
 from src.xai import attention_rollout, common, gradcam
 
-SYNTHESIS_SCHEMA_VERSION = 1
+SYNTHESIS_SCHEMA_VERSION = 2
 MODEL_ORDER = ("unet", "segformer")
-MODEL_LABELS = {"unet": "U-Net", "segformer": "SegFormer"}
-MODEL_COLORS = {"unet": "#1565c0", "segformer": "#6a1b9a"}
+MODEL_LABELS = figstyle.MODEL_LABELS
+MODEL_COLORS = figstyle.MODEL_COLORS
 CORE_TABLES = (
     "dataset",
     "training",
@@ -45,6 +45,7 @@ CORE_TABLES = (
     "evaluation_aggregate",
     "comparative_paired",
     "comparative_per_fold",
+    "inference_spatial",
 )
 FIGURE_NAMES = ("training_curves", "evaluation_overview")
 XAI_COLUMNS = (
@@ -353,7 +354,32 @@ def build_dataset_table(storage_paths: dict[str, Path]) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def build_training_table(storage_paths: dict[str, Path], source_name: str) -> pd.DataFrame:
+LAST_EPOCHS_WINDOW = 10
+
+
+def _selection_optimism(epochs: list[dict[str, Any]] | None) -> dict[str, float]:
+    """IoU de validação na época final e na janela final (mede o viés da melhor época).
+
+    A época retida é a de maior IoU na própria dobra de validação; comparar com o
+    IoU das últimas épocas quantifica o otimismo da seleção, que não pode ser
+    removido sem uma partição adicional (e, portanto, sem retreino).
+    """
+    if not epochs:
+        return {}
+    values = [float(item["val_iou"]) for item in epochs]
+    window = values[-LAST_EPOCHS_WINDOW:]
+    return {
+        "final_epoch_val_iou": values[-1],
+        "last_window_val_iou": float(np.mean(window)),
+        "selection_optimism": float(max(values) - np.mean(window)),
+    }
+
+
+def build_training_table(
+    storage_paths: dict[str, Path],
+    source_name: str,
+    histories: dict[str, dict[int, list[dict[str, Any]]]] | None = None,
+) -> pd.DataFrame:
     """Resume as métricas e o melhor epoch de treino por modelo/dobra."""
     rows: list[dict[str, Any]] = []
     for model_name in MODEL_ORDER:
@@ -361,6 +387,7 @@ def build_training_table(storage_paths: dict[str, Path], source_name: str) -> pd
             payload = _read_json(trainer.metrics_path(storage_paths, model_name, source_name, fold))
             train_metrics = payload["train"]
             val_metrics = payload["val"]
+            optimism = _selection_optimism((histories or {}).get(model_name, {}).get(fold))
             rows.append(
                 {
                     "model": model_name,
@@ -377,6 +404,7 @@ def build_training_table(storage_paths: dict[str, Path], source_name: str) -> pd
                     "val_f1": float(val_metrics["f1"]),
                     "val_precision": float(val_metrics["precision"]),
                     "val_recall": float(val_metrics["recall"]),
+                    **optimism,
                 }
             )
     return pd.DataFrame(rows)
@@ -431,6 +459,61 @@ def build_evaluation_aggregate_table(
 def build_comparative_paired_table(comparison: dict[str, Any]) -> pd.DataFrame:
     """Resume as estatísticas emparelhadas por métrica (SegFormer − U-Net)."""
     rows = [dict(values) for values in comparison["paired"].values()]
+    return pd.DataFrame(rows)
+
+
+def build_inference_table(comparison: dict[str, Any]) -> pd.DataFrame:
+    """Inferência da diferença (SegFormer − U-Net) por patch, bloco espacial e dobra."""
+    spatial = comparison["spatial_inference"]
+    rows = []
+    for metric in evaluation.METRIC_KEYS:
+        patch = comparison["paired"][metric]
+        block = spatial["block_level"][metric]
+        fold = spatial["fold_level"][metric]
+        rows.append(
+            {
+                "metric": metric,
+                "mean_difference": block["mean_difference"],
+                "patch_ci95_low": patch["ci95_low"],
+                "patch_ci95_high": patch["ci95_high"],
+                "block_size": int(block["block_size"]),
+                "n_blocks": int(block["n_blocks"]),
+                "block_ci95_low": block["ci95_low"],
+                "block_ci95_high": block["ci95_high"],
+                "block_p_sign_flip": block["p_sign_flip"],
+                "block_p_holm": block["p_value_holm"],
+                "segformer_better_blocks": int(block["segformer_better_blocks"]),
+                "unet_better_blocks": int(block["unet_better_blocks"]),
+                "n_folds": int(fold["n_folds"]),
+                "fold_mean_difference": fold["mean_difference"],
+                "fold_ci95_low": fold["ci95_low"],
+                "fold_ci95_high": fold["ci95_high"],
+                "fold_p_sign_flip": fold["p_sign_flip"],
+                "segformer_better_folds": int(fold["segformer_better_folds"]),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def build_threshold_table(comparison: dict[str, Any]) -> pd.DataFrame:
+    """Precisão média e métricas sob limiar fixo, calibrado (LOFO) e ótimo, por modelo."""
+    sensitivity = comparison["threshold_sensitivity"]
+    rows = []
+    for model_name in MODEL_ORDER:
+        analysis = sensitivity["models"][model_name]
+        row: dict[str, Any] = {
+            "model": model_name,
+            "average_precision": analysis["average_precision"],
+            "fixed_threshold": analysis["fixed"]["threshold"],
+            "oracle_threshold": analysis["oracle"]["threshold"],
+        }
+        for key in evaluation.METRIC_KEYS:
+            row[f"{key}_fixed"] = analysis["fixed"]["metrics"][key]
+            row[f"{key}_calibrated"] = analysis["calibrated"]["aggregate"][key]
+            row[f"{key}_oracle"] = analysis["oracle"]["metrics"][key]
+        row["iou_calibrated_fold_mean"] = analysis["calibrated"]["fold_mean"]["iou"]
+        row["iou_calibrated_fold_std"] = analysis["calibrated"]["fold_std"]["iou"]
+        rows.append(row)
     return pd.DataFrame(rows)
 
 
@@ -574,6 +657,24 @@ def _current_artifacts(
     return stored.get("fingerprint") == fingerprint
 
 
+def _threshold_summary(comparison: dict[str, Any]) -> dict[str, Any] | None:
+    """Resumo compacto da sensibilidade ao limiar (sem as curvas) para o summary.json."""
+    sensitivity = comparison.get("threshold_sensitivity")
+    if sensitivity is None:
+        return None
+    return {
+        "average_precision": {
+            name: sensitivity["models"][name]["average_precision"] for name in MODEL_ORDER
+        },
+        "average_precision_delta": sensitivity["average_precision_delta"],
+        "calibrated_aggregate": {
+            name: sensitivity["models"][name]["calibrated"]["aggregate"] for name in MODEL_ORDER
+        },
+        "calibrated_delta": sensitivity["calibrated_delta"],
+        "inference_calibrated": sensitivity["inference_calibrated"],
+    }
+
+
 def run_synthesis(
     storage_paths: dict[str, Path],
     source_name: str | None = None,
@@ -584,6 +685,8 @@ def run_synthesis(
     fingerprint = synthesis_fingerprint(storage_paths, source, summaries, comparison, xai_models)
     table_names = list(CORE_TABLES)
     figure_names = list(FIGURE_NAMES)
+    if comparison.get("threshold_sensitivity") is not None:
+        table_names.append("threshold_sensitivity")
     if xai_models:
         table_names.append("xai")
         figure_names.append("xai_relevance")
@@ -609,36 +712,35 @@ def run_synthesis(
 
     from src import io
 
+    histories = _load_histories(storage_paths, source)
     tables = {
         "dataset": build_dataset_table(storage_paths),
-        "training": build_training_table(storage_paths, source),
+        "training": build_training_table(storage_paths, source, histories),
         "evaluation_per_fold": build_evaluation_per_fold_table(summaries),
         "evaluation_aggregate": build_evaluation_aggregate_table(summaries),
         "comparative_paired": build_comparative_paired_table(comparison),
         "comparative_per_fold": build_comparative_per_fold_table(comparison),
+        "inference_spatial": build_inference_table(comparison),
     }
+    if comparison.get("threshold_sensitivity") is not None:
+        tables["threshold_sensitivity"] = build_threshold_table(comparison)
     xai_table = build_xai_table(storage_paths, source, xai_models)
     if not xai_table.empty:
         tables["xai"] = xai_table
     for name, table in tables.items():
         _persist_table(storage_paths, source, name, table)
 
-    histories = _load_histories(storage_paths, source)
     figures = {
         "training_curves": figure_path(storage_paths, "training_curves", source),
         "evaluation_overview": figure_path(storage_paths, "evaluation_overview", source),
     }
-    io.persist_bytes(
-        figures["training_curves"],
-        render_training_curves(histories),
-    )
-    io.persist_bytes(
-        figures["evaluation_overview"],
-        render_evaluation_overview(summaries, comparison),
+    figstyle.persist_figure(figures["training_curves"], render_training_curves(histories))
+    figstyle.persist_figure(
+        figures["evaluation_overview"], render_evaluation_overview(summaries, comparison)
     )
     if not xai_table.empty:
         figures["xai_relevance"] = figure_path(storage_paths, "xai_relevance", source)
-        io.persist_bytes(figures["xai_relevance"], render_xai_relevance(xai_table))
+        figstyle.persist_figure(figures["xai_relevance"], render_xai_relevance(xai_table))
 
     xai_summary: dict[str, Any] = {"included": not xai_table.empty, "models": xai_models}
     if not xai_table.empty:
@@ -665,6 +767,8 @@ def run_synthesis(
         },
         "aggregate_delta": comparison["aggregate_delta"],
         "paired": comparison["paired"],
+        "spatial_inference": comparison.get("spatial_inference"),
+        "threshold_sensitivity": _threshold_summary(comparison),
         "xai": xai_summary,
         "tables": {
             name: str(path)
@@ -701,73 +805,110 @@ def run_synthesis(
     )
 
 
-def render_training_curves(histories: dict[str, dict[int, list[dict[str, Any]]]]) -> bytes:
-    """Renderiza perda de treino/validação, IoU e F1 por época para os dois modelos."""
+def render_training_curves(
+    histories: dict[str, dict[int, list[dict[str, Any]]]],
+) -> dict[str, bytes]:
+    """Perda e métricas de validação por época: dobras (finas), média do modelo e melhor época."""
     from matplotlib.lines import Line2D
 
-    from src.data.raster_utils import render_figure
+    panels = (
+        ("train_loss", "Perda de treino"),
+        ("val_loss", "Perda de validação"),
+        ("val_iou", "IoU de validação"),
+        ("val_f1", "F1 de validação"),
+    )
 
-    def _build(plt: Any) -> Any:
-        figure, axes = plt.subplots(2, 2, figsize=(14, 10))
-        panels = (
-            ("train_loss", "Perda de treino"),
-            ("val_loss", "Perda de validação"),
-            ("val_iou", "IoU de validação"),
-            ("val_f1", "F1 de validação"),
-        )
-        for axis, (key, title) in zip(axes.ravel(), panels, strict=True):
+    def _build(plt: Any, figure: Any) -> None:
+        axes = figure.subplots(2, 2, sharex=True)
+        for index, (axis, (key, title)) in enumerate(zip(axes.ravel(), panels, strict=True)):
             for model_name in MODEL_ORDER:
-                for _fold, epochs in histories[model_name].items():
-                    axis.plot(
-                        [int(item["epoch"]) for item in epochs],
-                        [float(item[key]) for item in epochs],
-                        color=MODEL_COLORS[model_name],
-                        alpha=0.45,
-                        linewidth=1.2,
-                    )
+                color = MODEL_COLORS[model_name]
+                curves = []
+                for epochs in histories[model_name].values():
+                    x = [int(item["epoch"]) for item in epochs]
+                    y = [float(item[key]) for item in epochs]
+                    curves.append(y)
+                    axis.plot(x, y, color=color, alpha=0.22, linewidth=0.8)
+                    if key == "val_iou":
+                        best = int(np.argmax(y))
+                        axis.scatter(
+                            [x[best]], [y[best]], color=color, s=12, zorder=4, edgecolors="white"
+                        )
+                length = min(len(curve) for curve in curves)
+                mean = np.mean([curve[:length] for curve in curves], axis=0)
+                axis.plot(range(1, length + 1), mean, color=color, linewidth=1.8)
             axis.set_title(title)
-            axis.set_xlabel("época")
-            axis.set_ylabel(key)
-            axis.grid(alpha=0.2)
+            axis.set_ylabel("Valor")
+            if index >= 2:
+                axis.set_xlabel("Época")
+            figstyle.panel_label(axis, f"({'abcd'[index]})")
         handles = [
-            Line2D([0], [0], color=MODEL_COLORS[model_name], label=MODEL_LABELS[model_name])
-            for model_name in MODEL_ORDER
+            Line2D([0], [0], color=MODEL_COLORS[name], linewidth=1.8, label=MODEL_LABELS[name])
+            for name in MODEL_ORDER
         ]
-        axes[0, 1].legend(handles=handles, loc="best")
-        figure.suptitle("Curvas de treino por dobra (validação espacial)", fontsize=13)
-        figure.tight_layout(rect=(0, 0, 1, 0.97))
-        return figure
+        handles.append(
+            Line2D([0], [0], color="gray", linewidth=0.8, alpha=0.6, label="Dobras individuais")
+        )
+        handles.append(
+            Line2D(
+                [0],
+                [0],
+                color="gray",
+                marker="o",
+                markersize=4,
+                linestyle="",
+                label="Melhor época (IoU)",
+            )
+        )
+        figure.legend(handles=handles, loc="outside lower center", ncol=4)
 
-    return render_figure(_build)
+    return figstyle.render_publication(_build, height_cm=13.5)
+
+
+def _value_labels(axis: Any, bars: Any, fmt: str = "{:.2f}") -> None:
+    """Escreve o valor acima de cada barra."""
+    for bar in bars:
+        height = bar.get_height()
+        axis.annotate(
+            fmt.format(height),
+            (bar.get_x() + bar.get_width() / 2, height),
+            ha="center",
+            va="bottom" if height >= 0 else "top",
+            fontsize=6.5,
+            xytext=(0, 1.5 if height >= 0 else -1.5),
+            textcoords="offset points",
+        )
 
 
 def render_evaluation_overview(
     summaries: dict[str, dict[str, Any]], comparison: dict[str, Any]
-) -> bytes:
-    """Renderiza métricas agregadas, por dobra, delta e intervalo de confiança."""
-    from src.data.raster_utils import render_figure
-
+) -> dict[str, bytes]:
+    """Métricas agregadas, IoU por dobra, delta por dobra e diferença com IC por blocos."""
     metrics = list(evaluation.METRIC_KEYS)
+    labels = [figstyle.METRIC_LABELS[key] for key in metrics]
+    block = comparison["spatial_inference"]["block_level"]
 
-    def _build(plt: Any) -> Any:
-        figure, axes = plt.subplots(2, 2, figsize=(14, 10))
-
+    def _build(plt: Any, figure: Any) -> None:
+        axes = figure.subplots(2, 2)
         positions = np.arange(len(metrics))
         width = 0.38
         for offset, model_name in zip((-width / 2, width / 2), MODEL_ORDER, strict=True):
-            axes[0, 0].bar(
+            bars = axes[0, 0].bar(
                 positions + offset,
                 [summaries[model_name]["aggregate"]["metrics"][key] for key in metrics],
                 width=width,
                 color=MODEL_COLORS[model_name],
                 label=MODEL_LABELS[model_name],
             )
-        axes[0, 0].set_xticks(positions, metrics)
-        axes[0, 0].set_ylim(0.0, 1.05)
+            _value_labels(axes[0, 0], bars)
+        axes[0, 0].set_xticks(positions, labels)
+        axes[0, 0].set_ylim(0.0, 1.0)
+        axes[0, 0].set_ylabel("Valor (agregado)")
         axes[0, 0].set_title("Métricas agregadas (micro)")
-        axes[0, 0].legend()
+        axes[0, 0].legend(loc="lower center", ncol=2)
+        figstyle.panel_label(axes[0, 0], "(a)")
 
-        folds = [str(int(item["fold"])) for item in summaries["unet"]["per_fold"]]
+        folds = [int(item["fold"]) for item in summaries["unet"]["per_fold"]]
         fold_positions = np.arange(len(folds))
         for offset, model_name in zip((-width / 2, width / 2), MODEL_ORDER, strict=True):
             axes[0, 1].bar(
@@ -777,68 +918,61 @@ def render_evaluation_overview(
                 color=MODEL_COLORS[model_name],
                 label=MODEL_LABELS[model_name],
             )
-        axes[0, 1].set_xticks(fold_positions, folds)
-        axes[0, 1].set_ylim(0.0, 1.05)
+        axes[0, 1].set_xticks(fold_positions, [str(fold) for fold in folds])
+        axes[0, 1].set_ylim(0.0, 1.0)
+        axes[0, 1].set_xlabel("Dobra de validação")
+        axes[0, 1].set_ylabel("IoU")
         axes[0, 1].set_title("IoU por dobra")
-        axes[0, 1].set_xlabel("dobra")
-        axes[0, 1].legend()
+        figstyle.panel_label(axes[0, 1], "(b)")
 
         per_fold = comparison["per_fold_delta"]
-        axes[1, 0].bar(
+        bars = axes[1, 0].bar(
             [str(int(item["fold"])) for item in per_fold],
             [item["delta"]["iou"] for item in per_fold],
-            color="#6a1b9a",
+            color=MODEL_COLORS["segformer"],
         )
+        _value_labels(axes[1, 0], bars, "{:+.3f}")
         axes[1, 0].axhline(0.0, color="black", linewidth=1)
-        axes[1, 0].set_title("Delta de IoU por dobra (SegFormer − U-Net)")
-        axes[1, 0].set_xlabel("dobra")
-        axes[1, 0].set_ylabel("delta de IoU")
+        axes[1, 0].set_xlabel("Dobra de validação")
+        axes[1, 0].set_ylabel("Δ IoU (SegFormer − U-Net)")
+        axes[1, 0].set_title("Diferença de IoU por dobra")
+        figstyle.panel_label(axes[1, 0], "(c)")
 
-        means = []
-        errors_low = []
-        errors_high = []
+        means, lows, highs = [], [], []
         for key in metrics:
-            result = comparison["paired"][key]
+            result = block[key]
             mean = result.get("mean_difference")
-            low = result.get("ci95_low")
-            high = result.get("ci95_high")
+            low, high = result.get("ci95_low"), result.get("ci95_high")
             means.append(0.0 if mean is None else float(mean))
-            errors_low.append(
-                0.0 if mean is None or low is None else max(0.0, float(mean) - float(low))
-            )
-            errors_high.append(
+            lows.append(0.0 if mean is None or low is None else max(0.0, float(mean) - float(low)))
+            highs.append(
                 0.0 if mean is None or high is None else max(0.0, float(high) - float(mean))
             )
         axes[1, 1].errorbar(
             positions,
             means,
-            yerr=[errors_low, errors_high],
+            yerr=[lows, highs],
             fmt="o",
-            color="#e53935",
-            capsize=5,
+            color=figstyle.COLOR_ACCENT,
+            capsize=4,
         )
         axes[1, 1].axhline(0.0, color="black", linewidth=1)
-        axes[1, 1].set_xticks(positions, metrics)
-        axes[1, 1].set_title("Diferença pareada com IC 95% (SegFormer − U-Net)")
-        axes[1, 1].set_ylabel("diferença média")
+        axes[1, 1].set_xticks(positions, labels)
+        axes[1, 1].set_ylabel("Diferença média (SegFormer − U-Net)")
+        axes[1, 1].set_title("Diferença com IC 95% (blocos espaciais)")
+        figstyle.panel_label(axes[1, 1], "(d)")
 
-        figure.suptitle("Avaliação e comparação dos modelos", fontsize=13)
-        figure.tight_layout(rect=(0, 0, 1, 0.97))
-        return figure
-
-    return render_figure(_build)
+    return figstyle.render_publication(_build, height_cm=13.5)
 
 
-def render_xai_relevance(table: pd.DataFrame) -> bytes:
-    """Renderiza a relevância média dentro/fora do café e a diferença por patch."""
-    from src.data.raster_utils import render_figure
-
+def render_xai_relevance(table: pd.DataFrame) -> dict[str, bytes]:
+    """Relevância média dentro/fora do café e contraste por recorte explicado."""
     models = [model_name for model_name in MODEL_ORDER if model_name in set(table["model"])]
 
-    def _build(plt: Any) -> Any:
-        figure, axes = plt.subplots(1, 2, figsize=(14, 5.5))
+    def _build(plt: Any, figure: Any) -> None:
+        axes = figure.subplots(1, 2)
         positions = np.arange(len(models))
-        width = 0.38
+        width = 0.36
         for index, model_name in enumerate(models):
             subset = table[table["model"] == model_name]
             inside = subset["relevance_inside"].astype(float)
@@ -847,35 +981,27 @@ def render_xai_relevance(table: pd.DataFrame) -> bytes:
                 index - width / 2,
                 float(inside.mean()),
                 width=width,
-                color="#2e7d32",
-                label="Dentro do café" if index == 0 else None,
+                color=figstyle.COLOR_INSIDE,
+                label="Dentro da lavoura" if index == 0 else None,
             )
             axes[0].bar(
                 index + width / 2,
                 float(outside.mean()),
                 width=width,
-                color="#f9a825",
-                label="Fora do café" if index == 0 else None,
+                color=figstyle.COLOR_OUTSIDE,
+                label="Fora da lavoura" if index == 0 else None,
             )
             axes[0].scatter(
-                np.full(len(subset), index - width / 2),
-                inside,
-                color="#1b5e20",
-                s=18,
-                zorder=3,
+                np.full(len(subset), index - width / 2), inside, color="black", s=9, zorder=3
             )
             axes[0].scatter(
-                np.full(len(subset), index + width / 2),
-                outside,
-                color="#ef6c00",
-                s=18,
-                zorder=3,
+                np.full(len(subset), index + width / 2), outside, color="black", s=9, zorder=3
             )
         axes[0].set_xticks(positions, [MODEL_LABELS[name] for name in models])
-        axes[0].set_ylim(0.0, 1.05)
-        axes[0].set_ylabel("relevância normalizada")
-        axes[0].set_title("Relevância média dentro/fora da referência de café")
-        axes[0].legend()
+        axes[0].set_ylabel("Relevância média normalizada")
+        axes[0].set_title("Relevância dentro e fora da referência")
+        axes[0].legend(loc="upper right")
+        figstyle.panel_label(axes[0], "(a)")
 
         for index, model_name in enumerate(models):
             subset = table[table["model"] == model_name]
@@ -884,15 +1010,20 @@ def render_xai_relevance(table: pd.DataFrame) -> bytes:
                 np.full(len(subset), index) + jitter,
                 subset["relevance_difference"].astype(float),
                 color=MODEL_COLORS[model_name],
-                s=40,
+                s=28,
+                zorder=3,
             )
-        axes[1].axhline(0.0, color="black", linewidth=1)
+            axes[1].hlines(
+                float(subset["relevance_difference"].astype(float).mean()),
+                index - 0.22,
+                index + 0.22,
+                color="black",
+                linewidth=1.5,
+            )
+        axes[1].axhline(0.0, color="black", linewidth=0.8)
         axes[1].set_xticks(positions, [MODEL_LABELS[name] for name in models])
-        axes[1].set_ylabel("relevância dentro − fora")
-        axes[1].set_title("Diferença de relevância por patch explicado")
+        axes[1].set_ylabel("Relevância dentro − fora")
+        axes[1].set_title("Contraste por recorte (linha: média)")
+        figstyle.panel_label(axes[1], "(b)")
 
-        figure.suptitle("Síntese quantitativa dos mapas de XAI", fontsize=13)
-        figure.tight_layout(rect=(0, 0, 1, 0.95))
-        return figure
-
-    return render_figure(_build)
+    return figstyle.render_publication(_build, height_cm=7.5)

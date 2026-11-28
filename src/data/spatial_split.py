@@ -24,6 +24,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from src import figstyle
 from src.config import get_config
 from src.data.mask_utils import reference_year
 from src.data.patch_generation import (
@@ -246,37 +247,58 @@ def split_figure_file_name(source_name: str) -> str:
 
 
 def save_split_figure(storage_paths: dict[str, Path], source_name: str) -> Path:
-    """Persiste a figura da divisão espacial da fonte (regenerada a cada execução).
+    """Persiste a figura da divisão espacial da fonte em PNG e PDF (regenerada a cada execução).
 
     A figura é derivada do manifesto vigente; regenerá-la evita manter uma
     divisão desatualizada após mudanças no dataset do estágio 06.
     """
-    from src import io
-
     figure_path = storage_paths["artifacts_figures"] / split_figure_file_name(source_name)
     manifest = load_manifest(storage_paths, source_name)
-    io.persist_bytes(figure_path, render_split_figure(manifest))
+    figstyle.persist_figure(figure_path, render_split_figure(manifest))
     print(f"Figura salva em: {figure_path}")
     return figure_path
 
 
-def render_split_figure(manifest: pd.DataFrame) -> bytes:
-    """Renderiza o mapa de centroides dos patches coloridos por dobra."""
-    from src.data.raster_utils import render_figure
+def render_split_figure(manifest: pd.DataFrame) -> dict[str, bytes]:
+    """Mapa dos recortes por dobra (km a partir do canto sudoeste), com legenda de contagens."""
+    from matplotlib.lines import Line2D
 
     centroids = np.array([bbox_centroid(value) for value in manifest["bbox"]])
-    folds = manifest["fold"].astype(int)
+    folds = manifest["fold"].astype(int).to_numpy()
+    east = (centroids[:, 0] - centroids[:, 0].min()) / 1000.0
+    north = (centroids[:, 1] - centroids[:, 1].min()) / 1000.0
 
-    def _build(plt: Any) -> Any:
-        figure, axis = plt.subplots(figsize=(8, 8))
-        scatter = axis.scatter(
-            centroids[:, 0], centroids[:, 1], c=folds, cmap="tab10", s=12, alpha=0.8
+    def _build(plt: Any, figure: Any) -> None:
+        axis = figure.subplots()
+        for fold in sorted(set(folds.tolist())):
+            selected = folds == fold
+            axis.scatter(
+                east[selected],
+                north[selected],
+                marker="s",
+                s=38,
+                color=figstyle.FOLD_COLORS[fold % len(figstyle.FOLD_COLORS)],
+                edgecolors="white",
+                linewidths=0.4,
+            )
+        handles = [
+            Line2D(
+                [0],
+                [0],
+                marker="s",
+                linestyle="",
+                markersize=6,
+                color=figstyle.FOLD_COLORS[fold % len(figstyle.FOLD_COLORS)],
+                label=f"Dobra {fold} (n = {int((folds == fold).sum())})",
+            )
+            for fold in sorted(set(folds.tolist()))
+        ]
+        figure.legend(handles=handles, loc="outside right upper", title="Dobras de validação")
+        axis.set_aspect("equal", adjustable="box")
+        axis.set_xlabel("Distância para leste (km)")
+        axis.set_ylabel("Distância para norte (km)")
+        axis.set_title(
+            f"Divisão espacial em {len(set(folds.tolist()))} dobras (centroides dos recortes)"
         )
-        axis.set_title(f"Divisão espacial k-fold (k={int(folds.max()) + 1})")
-        axis.set_xlabel("Easting (m)")
-        axis.set_ylabel("Northing (m)")
-        figure.colorbar(scatter, ax=axis, label="Dobra")
-        figure.tight_layout()
-        return figure
 
-    return render_figure(_build)
+    return figstyle.render_publication(_build, height_cm=11.0)

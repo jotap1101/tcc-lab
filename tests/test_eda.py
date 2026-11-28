@@ -182,7 +182,8 @@ def test_render_eda_figure_returns_png(tmp_path, monkeypatch) -> None:
     manifest = pd.read_parquet(manifest_path(paths, TEST_SOURCE))
     stats = compute_normalization_stats(paths, TEST_SOURCE)
     png = render_eda_figure(manifest, stats, paths)
-    assert png.startswith(b"\x89PNG")
+    assert png["png"].startswith(b"\x89PNG")
+    assert png["pdf"].startswith(b"%PDF")
 
 
 def test_compute_normalization_stats_requires_manifest(tmp_path, monkeypatch) -> None:

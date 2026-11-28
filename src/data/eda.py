@@ -19,6 +19,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from src import figstyle
 from src.config import get_config
 from src.data.mask_utils import reference_year
 from src.data.patch_generation import (
@@ -246,19 +247,21 @@ def run_sanity_checks(
     }
 
 
+BAND_LABELS = {"B2": "B2 (azul)", "B3": "B3 (verde)", "B4": "B4 (vermelho)", "B8": "B8 (NIR)"}
+BAND_COLORS = {"B2": "#0072b2", "B3": "#009e73", "B4": "#d55e00", "B8": "#7b1fa2"}
+
+
 def save_eda_figure(storage_paths: dict[str, Path], source_name: str) -> Path:
-    """Persiste a figura de resumo da EDA da fonte (regenerada a cada execução).
+    """Persiste a figura de resumo da EDA da fonte em PNG e PDF (regenerada a cada execução).
 
     A figura é derivada do manifesto e das estatísticas vigentes; regenerá-la
     garante que reexecuções após mudanças no dataset não mantenham figuras
     desatualizadas.
     """
-    from src import io
-
     figure_path = storage_paths["artifacts_figures"] / eda_figure_file_name(source_name)
     manifest = load_manifest(storage_paths, source_name)
     stats = compute_normalization_stats(storage_paths, source_name)
-    io.persist_bytes(figure_path, render_eda_figure(manifest, stats, storage_paths))
+    figstyle.persist_figure(figure_path, render_eda_figure(manifest, stats, storage_paths))
     print(f"Figura salva em: {figure_path}")
     return figure_path
 
@@ -267,44 +270,65 @@ def render_eda_figure(
     manifest: pd.DataFrame,
     stats: dict[str, Any],
     storage_paths: dict[str, Path],
-) -> bytes:
-    """Renderiza a figura de resumo: café, dobras, média±desvio e histogramas."""
+) -> dict[str, bytes]:
+    """Resumo: proporção de café, balanço das dobras, estatísticas e histogramas por banda."""
     from src import io
-    from src.data.raster_utils import render_figure
 
     bands = list(get_config()["data"]["bands"])
     sample = _deterministic_sample(manifest, SANITY_SAMPLE_SIZE)
     per_band = stats["per_band"]
 
-    def _build(plt: Any) -> Any:
-        figure, axes = plt.subplots(2, 2, figsize=(14, 10))
-        axes[0, 0].hist(manifest["coffee_ratio"], bins=20, color="#7b1fa2", alpha=0.8)
-        axes[0, 0].set_title("Distribuição da proporção de café por patch")
-        axes[0, 0].set_xlabel("coffee_ratio")
-        axes[0, 0].set_ylabel("patches")
+    def _build(plt: Any, figure: Any) -> None:
+        axes = figure.subplots(2, 2)
+        axes[0, 0].hist(manifest["coffee_ratio"], bins=20, color="#7b1fa2", alpha=0.85)
+        axes[0, 0].set_xlabel("Proporção de café por recorte")
+        axes[0, 0].set_ylabel("Recortes")
+        axes[0, 0].set_title(f"Densidade de café (n = {len(manifest)} recortes)")
+        figstyle.panel_label(axes[0, 0], "(a)")
 
         if "fold" in manifest.columns and manifest["fold"].notna().any():
             counts = manifest["fold"].value_counts().sort_index()
-            axes[0, 1].bar(
+            bars = axes[0, 1].bar(
                 [str(int(fold)) for fold in counts.index],
                 counts.values,
-                color="#2e7d32",
+                color=[
+                    figstyle.FOLD_COLORS[int(f) % len(figstyle.FOLD_COLORS)] for f in counts.index
+                ],
             )
-            axes[0, 1].set_title("Balanceamento por dobra (k-fold)")
-            axes[0, 1].set_xlabel("dobra")
-            axes[0, 1].set_ylabel("patches")
+            for bar in bars:
+                axes[0, 1].annotate(
+                    f"{int(bar.get_height())}",
+                    (bar.get_x() + bar.get_width() / 2, bar.get_height()),
+                    ha="center",
+                    va="bottom",
+                    fontsize=7,
+                    xytext=(0, 1.5),
+                    textcoords="offset points",
+                )
+            axes[0, 1].set_xlabel("Dobra de validação")
+            axes[0, 1].set_ylabel("Recortes")
+            axes[0, 1].set_title("Recortes por dobra espacial")
         else:
-            axes[0, 1].text(0.5, 0.5, "coluna fold ausente", ha="center", va="center")
+            axes[0, 1].text(0.5, 0.5, "Coluna de dobra ausente", ha="center", va="center")
             axes[0, 1].set_axis_off()
+        figstyle.panel_label(axes[0, 1], "(b)")
 
         band_names = list(per_band)
         x = np.arange(len(band_names))
         means = [per_band[band]["mean"] or 0.0 for band in band_names]
         stds = [per_band[band]["std"] or 0.0 for band in band_names]
-        axes[1, 0].bar(x, means, yerr=stds, capsize=4, color="#1565c0", alpha=0.85)
-        axes[1, 0].set_xticks(x, band_names)
-        axes[1, 0].set_title("Média ± desvio padrão por banda")
-        axes[1, 0].set_ylabel("reflectância")
+        axes[1, 0].bar(
+            x,
+            means,
+            yerr=stds,
+            capsize=3,
+            color=[BAND_COLORS.get(band, "#555555") for band in band_names],
+            alpha=0.9,
+        )
+        axes[1, 0].set_xticks(x, [BAND_LABELS.get(band, band) for band in band_names])
+        axes[1, 0].set_ylabel("Reflectância (média ± desvio)")
+        axes[1, 0].set_title("Estatísticas por banda")
+        figstyle.panel_label(axes[1, 0], "(c)")
 
         for index, band in enumerate(bands):
             values: list[np.ndarray] = []
@@ -318,14 +342,16 @@ def render_eda_figure(
                 axes[1, 1].hist(
                     np.concatenate(values),
                     bins=HIST_BINS,
-                    alpha=0.5,
-                    label=band,
+                    histtype="step",
+                    linewidth=1.4,
+                    density=True,
+                    color=BAND_COLORS.get(band, "#555555"),
+                    label=BAND_LABELS.get(band, band),
                 )
-        axes[1, 1].legend()
-        axes[1, 1].set_title("Histograma de reflectância por banda (amostra)")
+        axes[1, 1].legend(loc="upper right")
+        axes[1, 1].set_xlabel("Reflectância")
+        axes[1, 1].set_ylabel("Densidade")
+        axes[1, 1].set_title("Distribuição por banda (amostra)")
+        figstyle.panel_label(axes[1, 1], "(d)")
 
-        figure.suptitle("Análise exploratória do dataset de patches", fontsize=13)
-        figure.tight_layout(rect=(0, 0, 1, 0.97))
-        return figure
-
-    return render_figure(_build)
+    return figstyle.render_publication(_build, height_cm=13.5)

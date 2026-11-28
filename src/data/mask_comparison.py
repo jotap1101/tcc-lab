@@ -17,6 +17,7 @@ from typing import Any
 
 import numpy as np
 
+from src import figstyle
 from src.config import get_config
 from src.data.mask_utils import reference_year
 
@@ -188,46 +189,38 @@ def save_report(result: dict[str, Any], storage_paths: dict[str, Path]) -> Path:
     return report_path
 
 
+SOURCE_LABELS = {"mapbiomas": "MapBiomas", "alphaearth": "AlphaEarth", "emater": "Emater"}
+
+
 def save_figure(
     mask_set: MaskSet,
     storage_paths: dict[str, Path],
 ) -> Path:
-    """Persiste a figura do diagnóstico no Drive canônico (idempotente)."""
-    from src import io
-
-    figure_path = storage_paths["artifacts_figures"] / figure_file_name()
-    if io.path_exists(figure_path):
-        print(f"Figura já existente (reutilizada): {figure_path}")
-        return figure_path
-    io.persist_bytes(figure_path, render_comparison_figure(mask_set))
+    """Persiste a figura do diagnóstico em PNG e PDF (regenerada a cada execução)."""
+    figure_path = figstyle.persist_figure(
+        storage_paths["artifacts_figures"] / figure_file_name(), render_comparison_figure(mask_set)
+    )
     print(f"Figura salva em: {figure_path}")
     return figure_path
 
 
-def render_comparison_figure(mask_set: MaskSet) -> bytes:
-    """Renderiza a figura do diagnóstico: todas as fontes + todos os pares.
-
-    A primeira linha exibe a máscara de cada fonte (com o ano de referência);
-    a segunda linha mostra os mapas de concordância de todos os pares de fontes,
-    dispostos lado a lado — cada coluna da grade corresponde a um par.
-    """
-    from src.data.raster_utils import render_figure
+def render_comparison_figure(mask_set: MaskSet) -> dict[str, bytes]:
+    """Máscaras de cada fonte (linha 1) e concordância de todos os pares (linha 2)."""
+    from matplotlib.patches import Patch
 
     names = list(mask_set.masks)
     if len(names) < 2:
         raise ValueError("O diagnóstico comparativo exige pelo menos duas fontes.")
     pairs = list(itertools.combinations(names, 2))
     n_cols = max(len(names), len(pairs))
-    n_rows = 2
 
-    def _build(plt: Any) -> Any:
-        figure, axes = plt.subplots(n_rows, n_cols, figsize=(6 * n_cols, 8.8))
-        axes = np.atleast_2d(axes)
+    def _build(plt: Any, figure: Any) -> None:
+        axes = np.atleast_2d(figure.subplots(2, n_cols))
         for col, name in enumerate(names):
             _plot_mask(
                 axes[0, col],
                 display_array(mask_set.masks[name]),
-                f"{name} ({reference_year(name)})",
+                f"{SOURCE_LABELS.get(name, name)} ({reference_year(name)})",
             )
         for col in range(len(names), n_cols):
             axes[0, col].set_axis_off()
@@ -235,16 +228,19 @@ def render_comparison_figure(mask_set: MaskSet) -> bytes:
             _plot_agreement(
                 axes[1, col],
                 display_array(agreement_labels(mask_set.masks[first], mask_set.masks[other])),
-                first,
-                other,
+                f"{SOURCE_LABELS.get(first, first)} × {SOURCE_LABELS.get(other, other)}",
             )
         for col in range(len(pairs), n_cols):
             axes[1, col].set_axis_off()
-        figure.suptitle("Comparação das máscaras de café por fonte de ground truth", fontsize=13)
-        figure.tight_layout(rect=(0, 0, 1, 0.95))
-        return figure
+        handles = [
+            Patch(facecolor=AGREEMENT_COLORS[0], edgecolor="#777777", label="Sem café"),
+            Patch(facecolor=AGREEMENT_COLORS[1], label="Café nas duas fontes"),
+            Patch(facecolor=AGREEMENT_COLORS[2], label="Somente na primeira fonte"),
+            Patch(facecolor=AGREEMENT_COLORS[3], label="Somente na segunda fonte"),
+        ]
+        figure.legend(handles=handles, loc="outside lower center", ncol=4)
 
-    return render_figure(_build)
+    return figstyle.render_publication(_build, height_cm=12.5)
 
 
 def agreement_labels(reference_mask: np.ndarray, other_mask: np.ndarray) -> np.ndarray:
@@ -269,32 +265,31 @@ def display_array(mask: np.ndarray, max_dim: int = 4096) -> np.ndarray:
     return mask[::stride, ::stride]
 
 
+AGREEMENT_COLORS = ["#f2f2f2", "#2e7d32", "#e69f00", "#0072b2"]
+
+
 def _plot_mask(axis: Any, mask: np.ndarray, title: str) -> None:
-    """Exibe uma máscara binária (café em roxo sobre fundo claro)."""
+    """Exibe uma máscara binária (café em roxo sobre fundo claro), sem eixos."""
     from matplotlib.colors import ListedColormap
 
-    axis.imshow(mask, cmap=ListedColormap(COFFEE_COLORS), vmin=0, vmax=1)
+    axis.imshow(mask, cmap=ListedColormap(COFFEE_COLORS), vmin=0, vmax=1, interpolation="nearest")
     axis.set_title(title)
     axis.set_xticks([])
     axis.set_yticks([])
+    axis.grid(False)
 
 
-def _plot_agreement(axis: Any, labels: np.ndarray, reference: str, other: str) -> None:
-    """Exibe o mapa de concordância com as quatro classes e a legenda."""
+def _plot_agreement(axis: Any, labels: np.ndarray, title: str) -> None:
+    """Exibe o mapa de concordância com as quatro classes, sem eixos."""
     from matplotlib.colors import ListedColormap
-    from matplotlib.patches import Patch
 
-    colors = ["#f2f2f2", "#2e7d32", "#f9a825", "#1565c0"]
-    axis.imshow(labels, cmap=ListedColormap(colors), vmin=0, vmax=3)
-    axis.set_title("Concordância")
+    axis.imshow(
+        labels, cmap=ListedColormap(AGREEMENT_COLORS), vmin=0, vmax=3, interpolation="nearest"
+    )
+    axis.set_title(title)
     axis.set_xticks([])
     axis.set_yticks([])
-    legend = [
-        Patch(facecolor=colors[1], label="Café (ambas)"),
-        Patch(facecolor=colors[2], label=f"Somente {reference}"),
-        Patch(facecolor=colors[3], label=f"Somente {other}"),
-    ]
-    axis.legend(handles=legend, loc="lower center", fontsize=8, ncol=3)
+    axis.grid(False)
 
 
 def _safe_ratio(numerator: float, denominator: float) -> float | None:

@@ -29,6 +29,7 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
+from src import figstyle
 from src.config import get_config
 from src.data.mask_utils import reference_year
 from src.data.source_decision import chosen_source
@@ -40,11 +41,12 @@ from src.evaluation import (
 )
 from src.xai import common
 
-ATTENTION_ROLLOUT_SCHEMA_VERSION = 1
+ATTENTION_ROLLOUT_SCHEMA_VERSION = 2
 MODEL_NAME = "segformer"
 ROLLOUT_SCOPE = "last_stage"
 HEAD_REDUCTION = "mean"
 TOKEN_REDUCTION = "mean"
+QUERY_WEIGHTING = "predicted_coffee_probability"
 RESIDUAL = True
 NORMALIZATION = "min_max"
 ATTENTION_IMPLEMENTATION = "eager"
@@ -126,13 +128,18 @@ def evaluate_rollout_attentions(
     attentions: Sequence[torch.Tensor],
     *,
     residual: bool = RESIDUAL,
+    query_weights: torch.Tensor | None = None,
 ) -> torch.Tensor:
     """Calcula o Attention Rollout de atenções quadradas ``(cabeças, N, N)``.
 
     As cabeças são agregadas pela média, a identidade é somada quando
     ``residual`` é verdadeiro e cada linha é normalizada. As camadas são
     compostas por multiplicação matricial, na ordem de execução. Sem token CLS,
-    a relevância final de cada token é a média sobre as linhas do rollout.
+    a relevância final de cada token é a média das linhas do rollout; com
+    ``query_weights`` (N,), é a média ponderada das linhas, o que restringe a
+    explicação aos tokens de consulta que sustentam a classe-alvo. A média
+    uniforme acumula relevância em tokens que recebem muita atenção
+    independentemente do conteúdo (*attention sinks*), como o canto da imagem.
     """
     if not attentions:
         raise ValueError("Nenhuma atenção fornecida para o Attention Rollout.")
@@ -152,7 +159,20 @@ def evaluate_rollout_attentions(
         matrix = matrix / matrix.sum(dim=-1, keepdim=True).clamp_min(1e-12)
         rollout = matrix if rollout is None else matrix @ rollout
     assert rollout is not None
-    relevance = rollout.mean(dim=0)
+    if query_weights is None:
+        relevance = rollout.mean(dim=0)
+    else:
+        weights = query_weights.to(device=rollout.device, dtype=rollout.dtype).flatten()
+        if weights.numel() != rollout.shape[0]:
+            raise ValueError(
+                f"`query_weights` com {weights.numel()} elementos para {rollout.shape[0]} tokens."
+            )
+        total = weights.sum()
+        relevance = (
+            rollout.mean(dim=0)
+            if float(total) <= 0.0
+            else (weights[:, None] * rollout).sum(0) / total
+        )
     return relevance / relevance.sum().clamp_min(1e-12)
 
 
@@ -199,15 +219,30 @@ def _ensure_eager_attention(model: nn.Module) -> str:
     return str(implementation)
 
 
+def _query_weights(
+    logits: torch.Tensor, valid_mask: torch.Tensor | None, side: int
+) -> torch.Tensor:
+    """Probabilidade média de café (somente pixels válidos) em cada token de consulta."""
+    probability = torch.sigmoid(logits.float())[:, :1]
+    if valid_mask is not None:
+        valid = valid_mask.to(device=probability.device, dtype=probability.dtype)
+        valid = F.interpolate(valid[None, None], size=probability.shape[-2:], mode="nearest")
+        probability = probability * valid
+    return F.adaptive_avg_pool2d(probability, (side, side)).flatten()
+
+
 def compute_attention_rollout(
-    model: nn.Module, image: torch.Tensor
+    model: nn.Module, image: torch.Tensor, valid_mask: torch.Tensor | None = None
 ) -> tuple[np.ndarray, dict[str, Any]]:
     """Calcula o Attention Rollout de um patch para o SegFormer.
 
     ``image`` tem forma (C, H, W) ou (1, C, H, W). A atenção é extraída do
     backbone com `output_attentions=True` em modo `eager`, restrita à última
-    etapa, agregada por cabeça e token, reamostrada para a resolução da entrada e
-    normalizada em [0, 1]. Retorna o mapa float32 e seus metadados de escopo.
+    etapa e agregada por cabeça. Os tokens de consulta são ponderados pela
+    probabilidade predita de café (restrita aos pixels válidos de ``valid_mask``),
+    de modo que o mapa indique quais tokens sustentam as consultas de café. O mapa
+    é reamostrado para a resolução da entrada e normalizado em [0, 1] apenas sobre
+    os pixels válidos. Retorna o mapa float32 e seus metadados de escopo.
     """
     if image.dim() == 3:
         image = image.unsqueeze(0)
@@ -229,14 +264,15 @@ def compute_attention_rollout(
     if not depths:
         raise ValueError("Configuração do SegFormer sem `depths`.")
     stage_attentions = last_stage_attentions(attentions, depths)
-    relevance = evaluate_rollout_attentions(stage_attentions)
-    tokens = int(relevance.numel())
+    tokens = int(stage_attentions[0].shape[-1])
     side = int(round(math.sqrt(tokens)))
     if side * side != tokens:
         raise ValueError(
             f"Relevância com {tokens} tokens não forma uma grade quadrada; "
             "a última etapa do SegFormer deve ser espacial."
         )
+    query_weights = _query_weights(outputs.logits, valid_mask, side)
+    relevance = evaluate_rollout_attentions(stage_attentions, query_weights=query_weights)
     grid = relevance.reshape(side, side)[None, None]
     rollout = F.interpolate(
         grid,
@@ -244,12 +280,21 @@ def compute_attention_rollout(
         mode="bilinear",
         align_corners=False,
     )[0, 0]
-    minimum = float(rollout.min())
-    maximum = float(rollout.max())
+    valid = (
+        torch.ones_like(rollout, dtype=torch.bool)
+        if valid_mask is None
+        else valid_mask.to(device=rollout.device, dtype=torch.bool)
+    )
+    if not bool(valid.any()):
+        valid = torch.ones_like(rollout, dtype=torch.bool)
+    minimum = float(rollout[valid].min())
+    maximum = float(rollout[valid].max())
     if maximum <= minimum:
         normalized = np.zeros(tuple(image.shape[-2:]), dtype=np.float32)
     else:
-        normalized = ((rollout - minimum) / (maximum - minimum)).cpu().numpy().astype(np.float32)
+        scaled = ((rollout - minimum) / (maximum - minimum)).clamp(0.0, 1.0)
+        masked = torch.where(valid, scaled, torch.zeros_like(scaled))
+        normalized = masked.cpu().numpy().astype(np.float32)
     info = {
         "rollout_scope": ROLLOUT_SCOPE,
         "stage_index": len(depths) - 1,
@@ -259,6 +304,7 @@ def compute_attention_rollout(
         "num_heads": int(stage_attentions[0].shape[1]),
         "head_reduction": HEAD_REDUCTION,
         "token_reduction": TOKEN_REDUCTION,
+        "query_weighting": QUERY_WEIGHTING,
         "residual": RESIDUAL,
         "normalization": NORMALIZATION,
         "attention_implementation": implementation,
@@ -282,6 +328,7 @@ def attention_rollout_fingerprint(
         "rollout_scope": ROLLOUT_SCOPE,
         "head_reduction": HEAD_REDUCTION,
         "token_reduction": TOKEN_REDUCTION,
+        "query_weighting": QUERY_WEIGHTING,
         "residual": RESIDUAL,
         "normalization": NORMALIZATION,
         "attention_implementation": ATTENTION_IMPLEMENTATION,
@@ -366,7 +413,11 @@ def run_attention_rollout(
             models[fold] = load_model(MODEL_NAME, storage_paths, source, fold, device)
         model = models[fold]
         sample = common.load_patch_sample(storage_paths, manifest, patch, stats)
-        rollout, info = compute_attention_rollout(model, sample.normalized.unsqueeze(0).to(device))
+        rollout, info = compute_attention_rollout(
+            model,
+            sample.normalized.unsqueeze(0).to(device),
+            valid_mask=torch.from_numpy(sample.valid).to(device),
+        )
         rollout_info = rollout_info or info
         samples.append(
             AttentionRolloutSample(
@@ -404,7 +455,7 @@ def run_attention_rollout(
     }
     _persist_maps(maps_file, samples)
     io.persist_json(metadata_file, metadata)
-    io.persist_bytes(figure_file, render_attention_rollout_figure(samples))
+    figstyle.persist_figure(figure_file, render_attention_rollout_figure(samples))
     print(
         f"Attention Rollout: {len(samples)} patches | dobras "
         f"{sorted({sample.fold for sample in samples})} | {device}"
@@ -421,52 +472,10 @@ def run_attention_rollout(
     )
 
 
-def render_attention_rollout_figure(samples: list[AttentionRolloutSample]) -> bytes:
-    """Renderiza RGB, referência, Attention Rollout e sobreposição por patch."""
-    from matplotlib.cm import ScalarMappable
-    from matplotlib.colors import ListedColormap, Normalize
-
-    from src.data.raster_utils import render_figure
-
-    if not samples:
-        raise ValueError("Nenhuma amostra disponível para a figura Attention Rollout.")
-    reference_cmap = ListedColormap(["#f5f5f5", "#2e7d32"])
-
-    def _build(plt: Any) -> Any:
-        figure, axes = plt.subplots(
-            len(samples),
-            4,
-            figsize=(16, 4.2 * len(samples)),
-            squeeze=False,
-            constrained_layout=True,
-        )
-        for row, sample in enumerate(samples):
-            axes[row, 0].imshow(sample.image_rgb)
-            axes[row, 0].set_title(
-                f"{sample.label}\n{sample.patch_id} (dobra {sample.fold})", fontsize=9
-            )
-            axes[row, 1].imshow(
-                sample.reference.astype(np.uint8), cmap=reference_cmap, vmin=0, vmax=1
-            )
-            axes[row, 1].set_title("Referência (café)", fontsize=9)
-            axes[row, 2].imshow(sample.rollout, cmap="turbo", vmin=0.0, vmax=1.0)
-            axes[row, 2].set_title(f"Attention Rollout (IoU {sample.iou:.3f})", fontsize=9)
-            axes[row, 3].imshow(sample.image_rgb)
-            axes[row, 3].imshow(sample.rollout, cmap="turbo", alpha=0.45, vmin=0.0, vmax=1.0)
-            axes[row, 3].set_title("Sobreposição", fontsize=9)
-            for axis in axes[row]:
-                axis.axis("off")
-        mappable = ScalarMappable(norm=Normalize(0.0, 1.0), cmap="turbo")
-        mappable.set_array(np.asarray([]))
-        figure.colorbar(
-            mappable,
-            ax=axes[:, 2].tolist(),
-            orientation="horizontal",
-            fraction=0.02,
-            pad=0.02,
-            label="relevância Attention Rollout",
-        )
-        figure.suptitle("Attention Rollout — SegFormer (validação espacial)", fontsize=13)
-        return figure
-
-    return render_figure(_build)
+def render_attention_rollout_figure(
+    samples: list[AttentionRolloutSample],
+) -> dict[str, bytes]:
+    """Por recorte: imagem RGB, referência, Attention Rollout e sobreposição."""
+    return common.render_heatmap_figure(
+        samples, [sample.rollout for sample in samples], "Attention Rollout"
+    )

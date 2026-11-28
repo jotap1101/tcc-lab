@@ -69,7 +69,7 @@ def _summary(
         )
     values = {key: [item["metrics"][key] for item in per_fold] for key in ("iou", "f1")}
     return {
-        "schema_version": 1,
+        "schema_version": evaluation.EVALUATION_SCHEMA_VERSION,
         "model": "unet",
         "source_name": source,
         "threshold": evaluation.DEFAULT_THRESHOLD,
@@ -290,7 +290,8 @@ def test_render_gradcam_figure_returns_png(tmp_path, monkeypatch) -> None:
 
     png = gradcam.render_gradcam_figure(result.samples)
 
-    assert png.startswith(b"\x89PNG")
+    assert png["png"].startswith(b"\x89PNG")
+    assert png["pdf"].startswith(b"%PDF")
 
 
 def test_gradcam_dir_derives_from_artifacts_without_config_key(tmp_path: Path) -> None:
@@ -301,3 +302,16 @@ def test_gradcam_dir_derives_from_artifacts_without_config_key(tmp_path: Path) -
     target = gradcam.gradcam_dir(paths, TEST_SOURCE)
 
     assert target == paths["artifacts_metrics"].parent / "xai" / "gradcam" / "unet" / TEST_SOURCE
+
+
+def test_gradcam_normalizes_only_over_valid_pixels() -> None:
+    """A região inválida deve ser zerada e não pode definir o máximo da normalização."""
+    model = _small_model().eval()
+    image = torch.randn(1, 4, 16, 16)
+    valid = torch.ones(16, 16, dtype=torch.bool)
+    valid[:, 8:] = False
+
+    cam = gradcam.compute_gradcam(model, image, valid_mask=valid)
+
+    assert float(cam[:, 8:].max()) == 0.0
+    assert float(cam[:, :8].max()) in (0.0, pytest.approx(1.0))

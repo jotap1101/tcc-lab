@@ -66,9 +66,46 @@ def _summary(model_name: str) -> dict[str, Any]:
     }
 
 
+def _curve() -> dict[str, list[float]]:
+    """Curva P×R sintética monotônica para as figuras de limiar."""
+    thresholds = [index / 16 for index in range(17)]
+    return {
+        "threshold": thresholds,
+        "precision": [0.5 + 0.03 * index for index in range(17)],
+        "recall": [1.0 - 0.05 * index for index in range(17)],
+        "iou": [0.3 + 0.02 * index for index in range(17)],
+        "f1": [0.4 + 0.02 * index for index in range(17)],
+    }
+
+
+def _metrics_block(iou_value: float) -> dict[str, float]:
+    """Métricas sintéticas de um cenário de limiar."""
+    return {"iou": iou_value, "f1": iou_value + 0.1, "precision": 0.7, "recall": 0.8}
+
+
+def _threshold_sensitivity() -> dict[str, Any]:
+    """Sensibilidade ao limiar sintética com os campos usados pelas figuras e tabelas."""
+    models = {}
+    for model_name, base in (("unet", 0.60), ("segformer", 0.66)):
+        models[model_name] = {
+            "average_precision": base + 0.2,
+            "pr_curve": _curve(),
+            "fixed": {"threshold": 0.5, "metrics": _metrics_block(base)},
+            "oracle": {"threshold": 0.4, "metrics": _metrics_block(base + 0.02)},
+            "calibrated": {
+                "aggregate": _metrics_block(base + 0.01),
+                "fold_mean": _metrics_block(base),
+                "fold_std": _metrics_block(0.02),
+            },
+        }
+    return {"bins": 256, "models": models, "average_precision_delta": 0.06}
+
+
 def _comparison() -> dict[str, Any]:
     """Comparação sintética do estágio 12."""
     paired = {}
+    block_level = {}
+    fold_level = {}
     for index, metric in enumerate(("iou", "f1", "precision", "recall")):
         paired[metric] = {
             "metric": metric,
@@ -79,8 +116,23 @@ def _comparison() -> dict[str, Any]:
             "cohens_dz": 0.4,
             "cliffs_delta": 0.3,
         }
+        block_level[metric] = {
+            "mean_difference": 0.02 - 0.005 * index,
+            "ci95_low": 0.005,
+            "ci95_high": 0.035,
+            "p_value_holm": 0.004,
+            "n_blocks": 12,
+        }
+        fold_level[metric] = {
+            "mean_difference": 0.02 - 0.005 * index,
+            "ci95_low": 0.0,
+            "ci95_high": 0.04,
+            "n_folds": FOLD_COUNT,
+        }
     return {
         "paired": paired,
+        "spatial_inference": {"block_level": block_level, "fold_level": fold_level},
+        "threshold_sensitivity": _threshold_sensitivity(),
         "fingerprint": {"comparison": "hash"},
         "per_fold_delta": [
             {"fold": fold, "n_patches": 2, "delta": {"iou": 0.02 if fold else -0.01}}
@@ -284,8 +336,8 @@ def _data() -> monograph.MonographData:
 
 def test_catalog_covers_all_visual_elements() -> None:
     """O catálogo deve ter as 16 figuras e as 7 tabelas com legendas editoriais."""
-    assert len(monograph.FIGURE_CATALOG) == 16
-    assert len(monograph.TABLE_CATALOG) == 7
+    assert len(monograph.FIGURE_CATALOG) == 18
+    assert len(monograph.TABLE_CATALOG) == 8
     assert set(monograph.FIGURE_RENDERERS) == set(monograph.FIGURE_CATALOG)
     for spec in monograph.FIGURE_CATALOG.values():
         assert spec.section in {"Metodologia", "Resultados"}
@@ -331,6 +383,7 @@ def test_tables_translate_numbers_to_common_language() -> None:
         "model_results",
         "paired_comparison",
         "area_confusion",
+        "threshold_sensitivity",
         "xai_relevance",
     }
     assert list(tables["dataset"]["Fonte"]) == ["Emater"]
@@ -339,7 +392,7 @@ def test_tables_translate_numbers_to_common_language() -> None:
     assert "IoU" in set(tables["model_results"].columns)
     assert "±" in tables["model_results"].loc[0, "IoU"]
     assert "significativa" in tables["paired_comparison"].loc[0, "Interpretação"]
-    assert tables["paired_comparison"].loc[0, "p (Holm)"] == "0,002"
+    assert tables["paired_comparison"].loc[0, "p (blocos, Holm)"] == "0,004"
 
     area = tables["area_confusion"]
     reference = sum(

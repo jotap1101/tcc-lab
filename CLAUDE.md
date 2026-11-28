@@ -51,6 +51,10 @@ Ground-truth sources (`ground_truth.sources.*` in config: mapbiomas, alphaearth,
 - Each fold's metrics store `manifest_fingerprint_hash`, `split_fingerprint_hash` and `config_hash` (`trainer.config_hash()`); `fold_training_done()` compares them so a fold is retrained automatically when the dataset, split or config changes. Downstream stages (evaluation, XAI, synthesis `15`, monograph `17`) follow the same fingerprint-reuse pattern — when changing an artifact's inputs, make sure its fingerprint covers them.
 - `run_metadata`/`save_run_metadata` write `run.meta.json` (versions, seeds, config hash, commit SHA, determinism settings).
 
+### Figures and inference
+
+All figure renderers use `src/figstyle.py` (final print size in cm, PNG 300 dpi + PDF) and return `dict[str, bytes]`; `figstyle.persist_figure` writes every format next to the canonical PNG. Stage 11 persists per-patch probability histograms (`src/thresholds.py`) so stage 12 can run threshold-independent analysis (AP, leave-one-fold-out calibrated threshold) without re-inference. Patch-level tests in `comparative.py` are descriptive; primary inference is block/fold-level (`src/spatial_inference.py`).
+
 ### Downstream modules
 
 `src/evaluation.py` (11) → `src/comparative.py` (12, paired stats) → `src/xai/{gradcam,attention_rollout,common}.py` (13–14) → `src/synthesis.py` (15) → `src/release.py` (16, HF Hub) → `src/monograph.py` (17, read-only rendering of earlier artifacts; editorial parameters live in the module, not in `config.yaml`). Each notebook stage maps to one of these modules plus `src/data/*` for stages 01–08; `tests/test_<module>.py` mirrors each module.

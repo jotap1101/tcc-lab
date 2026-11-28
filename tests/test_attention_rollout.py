@@ -27,8 +27,9 @@ STAGE_GRID = 4
 class _FakeOutput:
     """Saída mínima do backbone com atenções."""
 
-    def __init__(self, attentions: tuple[torch.Tensor, ...]) -> None:
+    def __init__(self, attentions: tuple[torch.Tensor, ...], logits: torch.Tensor) -> None:
         self.attentions = attentions
+        self.logits = logits
 
 
 class _FakeBackbone(nn.Module):
@@ -49,8 +50,12 @@ class _FakeBackbone(nn.Module):
 
     def forward(self, pixel_values: torch.Tensor, output_attentions: bool) -> _FakeOutput:
         """Retorna as atenções sintéticas, independentemente da entrada."""
-        del pixel_values, output_attentions
-        return _FakeOutput(self.attentions)
+        del output_attentions
+        height, width = pixel_values.shape[-2:]
+        # Logits na resolução 1/4 da entrada, com maior probabilidade de café à esquerda.
+        logits = torch.zeros(1, 1, height // 4, width // 4)
+        logits[..., : width // 8] = 4.0
+        return _FakeOutput(self.attentions, logits)
 
 
 class _FakeModel(nn.Module):
@@ -125,7 +130,7 @@ def _summary(
         )
     values = {key: [item["metrics"][key] for item in per_fold] for key in ("iou", "f1")}
     return {
-        "schema_version": 1,
+        "schema_version": evaluation.EVALUATION_SCHEMA_VERSION,
         "model": "segformer",
         "source_name": source,
         "threshold": evaluation.DEFAULT_THRESHOLD,
@@ -339,7 +344,8 @@ def test_render_attention_rollout_figure_returns_png(tmp_path, monkeypatch) -> N
 
     png = attention_rollout.render_attention_rollout_figure(result.samples)
 
-    assert png.startswith(b"\x89PNG")
+    assert png["png"].startswith(b"\x89PNG")
+    assert png["pdf"].startswith(b"%PDF")
 
 
 def test_compute_attention_rollout_with_segformer_backbone() -> None:
@@ -356,3 +362,44 @@ def test_compute_attention_rollout_with_segformer_backbone() -> None:
     assert info["stage_layers"] == model.model.config.depths[-1]
     side = info["stage_grid"][0]
     assert side * side == info["stage_grid"][0] * info["stage_grid"][1]
+
+
+def test_query_weights_concentrate_relevance_on_weighted_tokens() -> None:
+    """Pesos de consulta devem deslocar a relevância para os tokens ponderados."""
+    tokens = STAGE_GRID * STAGE_GRID
+    generator = torch.Generator().manual_seed(3)
+    attention = torch.softmax(torch.randn(2, tokens, tokens, generator=generator), dim=-1)
+    weights = torch.zeros(tokens)
+    weights[0] = 1.0
+
+    uniform = attention_rollout.evaluate_rollout_attentions([attention])
+    explicit_uniform = attention_rollout.evaluate_rollout_attentions(
+        [attention], query_weights=torch.ones(tokens)
+    )
+    conditioned = attention_rollout.evaluate_rollout_attentions([attention], query_weights=weights)
+
+    assert torch.allclose(uniform, explicit_uniform, atol=1e-6)
+    assert float(conditioned.sum()) == pytest.approx(1.0)
+    assert int(torch.argmax(conditioned)) == 0  # a identidade residual mantém o token 0 em destaque
+    assert not torch.allclose(uniform, conditioned)
+
+
+def test_query_weights_reject_wrong_size() -> None:
+    """O número de pesos deve coincidir com o número de tokens."""
+    attention = torch.softmax(torch.randn(1, 4, 4), dim=-1)
+    with pytest.raises(ValueError, match="query_weights"):
+        attention_rollout.evaluate_rollout_attentions([attention], query_weights=torch.ones(3))
+
+
+def test_rollout_zeroes_invalid_region_and_normalizes_on_valid() -> None:
+    """O mapa deve ser normalizado só sobre pixels válidos e zerado fora do AOI."""
+    model = _FakeModel(_fake_attentions())
+    image = torch.zeros(1, 4, 64, 64)
+    valid = torch.ones(64, 64, dtype=torch.bool)
+    valid[:, 48:] = False
+
+    rollout, info = attention_rollout.compute_attention_rollout(model, image, valid_mask=valid)
+
+    assert float(rollout[:, 48:].max()) == 0.0
+    assert float(rollout[:, :48].max()) == pytest.approx(1.0)
+    assert info["query_weighting"] == attention_rollout.QUERY_WEIGHTING

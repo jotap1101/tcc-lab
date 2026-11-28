@@ -16,10 +16,9 @@ regenerado quando qualquer fingerprint de entrada muda.
 
 from __future__ import annotations
 
-import contextlib
 import hashlib
 import json
-from collections.abc import Callable, Iterator
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -27,7 +26,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from src import comparative, evaluation, synthesis, trainer
+from src import comparative, evaluation, figstyle, spatial_inference, synthesis, trainer
 from src.config import get_config
 from src.data.mask_utils import reference_year, source_mask_path
 from src.data.patch_generation import load_manifest, patch_fingerprint_hash
@@ -36,7 +35,7 @@ from src.data.source_decision import chosen_source
 from src.data.spatial_split import fold_count, split_fingerprint_hash
 from src.xai import common
 
-MONOGRAPH_SCHEMA_VERSION = 2
+MONOGRAPH_SCHEMA_VERSION = 3
 MODEL_ORDER = synthesis.MODEL_ORDER
 MODEL_LABELS = synthesis.MODEL_LABELS
 MODEL_COLORS = synthesis.MODEL_COLORS
@@ -48,18 +47,17 @@ COLOR_FALSE_POSITIVE = "#e69f00"
 COLOR_FALSE_NEGATIVE = "#cc79a7"
 COLOR_TRUE_NEGATIVE = "#d9d9d9"
 COLOR_IGNORED = "#404040"
-COLOR_REFERENCE = "#2e7d32"
-COLOR_NEUTRAL = "#e0e0e0"
-FOLD_COLORS = ("#0072b2", "#e69f00", "#009e73", "#cc79a7", "#56b4e9")
-METRIC_LABELS = {"iou": "IoU", "f1": "F1", "precision": "Precisão", "recall": "Recall"}
+COLOR_REFERENCE = figstyle.COLOR_REFERENCE
+COLOR_NEUTRAL = figstyle.COLOR_NEUTRAL
+FOLD_COLORS = figstyle.FOLD_COLORS
+METRIC_LABELS = figstyle.METRIC_LABELS
 SOURCE_LABELS = {"mapbiomas": "MapBiomas", "alphaearth": "AlphaEarth", "emater": "Emater"}
 
-# Parâmetros editoriais das figuras. Ficam no módulo (e não em config.yaml)
-# porque o hash do config.yaml é o fingerprint dos artefatos de treino e
-# avaliação: acrescentar chaves de apresentação invalidaria os estágios 09–15.
-FIGURE_WIDTH_CM = 16.0  # largura da área de texto da página ABNT
-FIGURE_DPI = 300
-FIGURE_FORMATS = ("png", "pdf")
+# Parâmetros editoriais das figuras: compartilhados com os demais estágios em
+# `src.figstyle` (ficam fora de config.yaml para não invalidar os estágios 09–15).
+FIGURE_WIDTH_CM = figstyle.FIGURE_WIDTH_CM
+FIGURE_DPI = figstyle.FIGURE_DPI
+FIGURE_FORMATS = figstyle.FIGURE_FORMATS
 
 
 # ---------------------------------------------------------------------------
@@ -139,6 +137,18 @@ FIGURE_CATALOG: dict[str, FigureSpec] = {
         "Desempenho agregado por métrica e diferença pareada entre os modelos "
         "(SegFormer − U-Net), com intervalo de confiança de 95%.",
     ),
+    "inference_levels": FigureSpec(
+        "Resultados",
+        "Diferença de cada métrica (SegFormer − U-Net) com intervalo de confiança de 95% "
+        "segundo a unidade de análise: recortes (descritivo, desconsidera a dependência "
+        "espacial), blocos espaciais de recortes vizinhos e dobras de validação.",
+    ),
+    "threshold_sensitivity": FigureSpec(
+        "Resultados",
+        "Sensibilidade ao limiar de decisão: (a) curvas precisão × revocação, com a precisão "
+        "média (AP) de cada modelo; (b) IoU agregado em função do limiar. O círculo marca o "
+        "limiar de 0,5 usado nas métricas principais e a estrela, o limiar de maior IoU.",
+    ),
     "patch_iou_distribution": FigureSpec(
         "Resultados",
         "Distribuição do IoU por patch de validação: cada ponto é um talhão e a linha "
@@ -162,7 +172,8 @@ FIGURE_CATALOG: dict[str, FigureSpec] = {
     "xai_panel": FigureSpec(
         "Resultados",
         "Mapas de explicabilidade do mesmo talhão (Grad-CAM da U-Net e Attention Rollout "
-        "do SegFormer) e a relevância média dentro e fora da região de café.",
+        "do SegFormer, ponderado pela probabilidade predita de café) e a relevância média "
+        "dentro e fora da região de café, calculada apenas sobre pixels válidos.",
     ),
     "summary_card": FigureSpec(
         "Resultados",
@@ -193,6 +204,11 @@ TABLE_CATALOG: dict[str, TableSpec] = {
         "Resultados",
         "Comparação pareada por patch entre SegFormer e U-Net, com interpretação do "
         "tamanho da diferença.",
+    ),
+    "threshold_sensitivity": TableSpec(
+        "Resultados",
+        "Precisão média e desempenho com limiar fixo (0,5), calibrado em outras dobras "
+        "(leave-one-fold-out) e ótimo (limite superior otimista).",
     ),
     "area_confusion": TableSpec(
         "Resultados",
@@ -674,6 +690,7 @@ def build_monograph_data(
 def available_figures(data: MonographData) -> list[str]:
     """Figuras que podem ser geradas com os artefatos carregados (ordem canônica)."""
     availability = {
+        "threshold_sensitivity": data.comparison.get("threshold_sensitivity") is not None,
         "study_area": data.study_area is not None,
         "label_sources": data.label_sources is not None,
         "bands": data.showcase is not None,
@@ -686,7 +703,10 @@ def available_figures(data: MonographData) -> list[str]:
 
 def available_tables(data: MonographData) -> list[str]:
     """Tabelas que podem ser geradas com os artefatos carregados (ordem canônica)."""
-    availability = {"xai_relevance": not data.xai_table.empty}
+    availability = {
+        "xai_relevance": not data.xai_table.empty,
+        "threshold_sensitivity": data.comparison.get("threshold_sensitivity") is not None,
+    }
     return [key for key in TABLE_CATALOG if availability.get(key, True)]
 
 
@@ -788,7 +808,15 @@ def build_protocol_table(config: dict[str, Any]) -> pd.DataFrame:
         ),
         ("Limiar de decisão", _number(evaluation.DEFAULT_THRESHOLD)),
         ("U-Net (canais)", ", ".join(str(int(c)) for c in model["unet_channels"])),
+        ("Inicialização da U-Net", "pesos aleatórios (treino do zero)"),
         ("SegFormer", str(model["segformer_variant"])),
+        ("Inicialização do SegFormer", "codificador pré-treinado; cabeça e entrada adaptadas"),
+        ("Seleção da época", "maior IoU na própria dobra de validação (viés otimista)"),
+        (
+            "Unidade da inferência estatística",
+            f"bloco espacial de {spatial_inference.SPATIAL_BLOCK_SIZE} × "
+            f"{spatial_inference.SPATIAL_BLOCK_SIZE} recortes e dobra",
+        ),
     ]
     return pd.DataFrame(rows, columns=["Item", "Valor"])
 
@@ -841,22 +869,52 @@ def build_model_results_table(summaries: dict[str, dict[str, Any]]) -> pd.DataFr
 
 
 def build_paired_comparison_table(comparison: dict[str, Any]) -> pd.DataFrame:
-    """Traduz a comparação pareada em diferença, intervalo, p e interpretação."""
+    """Traduz a comparação em diferença, IC por blocos e dobras, p corrigido e efeito.
+
+    A inferência principal usa o bloco espacial como unidade (patches vizinhos não
+    são independentes); o IC e o p por recorte permanecem como referência descritiva.
+    """
+    spatial = comparison["spatial_inference"]
     rows: list[dict[str, Any]] = []
     for metric in evaluation.METRIC_KEYS:
-        result = comparison["paired"][metric]
-        difference = result.get("mean_difference")
-        pvalue = result.get("p_value_holm")
+        patch = comparison["paired"][metric]
+        block = spatial["block_level"][metric]
+        fold = spatial["fold_level"][metric]
+        difference = block.get("mean_difference")
+        pvalue = block.get("p_value_holm")
         rows.append(
             {
                 "Métrica": METRIC_LABELS[metric],
                 "Diferença média (SegFormer − U-Net)": _number(difference),
-                "Intervalo de confiança (95%)": _interval(
-                    result.get("ci95_low"), result.get("ci95_high")
+                "IC 95% (blocos espaciais)": _interval(
+                    block.get("ci95_low"), block.get("ci95_high")
                 ),
-                "p (Holm)": _pvalue(pvalue),
-                "Tamanho de efeito (d_z)": _number(result.get("cohens_dz"), 2),
+                "p (blocos, Holm)": _pvalue(pvalue),
+                "IC 95% (dobras, n = 5)": _interval(fold.get("ci95_low"), fold.get("ci95_high")),
+                "IC 95% (recortes, descritivo)": _interval(
+                    patch.get("ci95_low"), patch.get("ci95_high")
+                ),
+                "Tamanho de efeito (d_z)": _number(patch.get("cohens_dz"), 2),
                 "Interpretação": _interpret_difference(difference, pvalue),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def build_threshold_table(comparison: dict[str, Any]) -> pd.DataFrame:
+    """Compara os modelos sem depender do limiar fixo: AP e limiares fixo, calibrado e ótimo."""
+    sensitivity = comparison["threshold_sensitivity"]
+    rows: list[dict[str, Any]] = []
+    for model_name in MODEL_ORDER:
+        analysis = sensitivity["models"][model_name]
+        rows.append(
+            {
+                "Modelo": MODEL_LABELS[model_name],
+                "Precisão média (AP)": _number(analysis["average_precision"]),
+                "IoU (limiar 0,5)": _number(analysis["fixed"]["metrics"]["iou"]),
+                "IoU (limiar calibrado)": _number(analysis["calibrated"]["aggregate"]["iou"]),
+                "IoU (limiar ótimo)": _number(analysis["oracle"]["metrics"]["iou"]),
+                "Limiar ótimo": _number(analysis["oracle"]["threshold"], 2),
             }
         )
     return pd.DataFrame(rows)
@@ -912,6 +970,8 @@ def build_tables(data: MonographData) -> dict[str, pd.DataFrame]:
         "paired_comparison": build_paired_comparison_table(data.comparison),
         "area_confusion": build_area_table(data.summaries, data.config),
     }
+    if data.comparison.get("threshold_sensitivity") is not None:
+        tables["threshold_sensitivity"] = build_threshold_table(data.comparison)
     xai_summary = build_xai_summary_table(data.xai_table)
     if not xai_summary.empty:
         tables["xai_relevance"] = xai_summary
@@ -923,34 +983,7 @@ def build_tables(data: MonographData) -> dict[str, pd.DataFrame]:
 # ---------------------------------------------------------------------------
 
 
-@contextlib.contextmanager
-def publication_style() -> Iterator[None]:
-    """Aplica o padrão tipográfico das figuras da monografia e o restaura ao final."""
-    import matplotlib as mpl
-
-    saved = dict(mpl.rcParams)
-    mpl.rcParams.update(
-        {
-            "font.size": 9,
-            "axes.titlesize": 10,
-            "axes.labelsize": 9,
-            "xtick.labelsize": 8,
-            "ytick.labelsize": 8,
-            "legend.fontsize": 8,
-            "axes.spines.top": False,
-            "axes.spines.right": False,
-            "axes.grid": True,
-            "grid.alpha": 0.25,
-            "grid.linewidth": 0.5,
-            "axes.axisbelow": True,
-            "figure.facecolor": "white",
-            "savefig.facecolor": "white",
-        }
-    )
-    try:
-        yield
-    finally:
-        mpl.rcParams.update(saved)
+publication_style = figstyle.publication_style
 
 
 def _render(
@@ -1636,7 +1669,7 @@ def render_metrics_overview(data: MonographData, context: RenderContext) -> dict
         lows = []
         highs = []
         for metric in metrics:
-            result = data.comparison["paired"][metric]
+            result = data.comparison["spatial_inference"]["block_level"][metric]
             mean = result.get("mean_difference")
             means.append(0.0 if mean is None else float(mean))
             lows.append(
@@ -1661,7 +1694,7 @@ def render_metrics_overview(data: MonographData, context: RenderContext) -> dict
         axes[1].axhline(0.0, color="#212121", linewidth=1)
         axes[1].set_xticks(positions, [METRIC_LABELS[key] for key in metrics])
         axes[1].set_ylabel("diferença média")
-        axes[1].set_title("Diferença SegFormer − U-Net (IC 95%)")
+        axes[1].set_title("Diferença SegFormer − U-Net (IC 95%, blocos)")
         for position, mean in zip(positions, means, strict=True):
             axes[1].annotate(
                 _number(mean),
@@ -1673,6 +1706,16 @@ def render_metrics_overview(data: MonographData, context: RenderContext) -> dict
             )
 
     return _render(_build, context, height_cm=6.8)
+
+
+def render_inference_levels(data: MonographData, context: RenderContext) -> dict[str, bytes]:
+    """Floresta de IC 95% da diferença segundo a unidade de análise."""
+    return comparative.render_inference_figure(data.comparison)
+
+
+def render_threshold_sensitivity(data: MonographData, context: RenderContext) -> dict[str, bytes]:
+    """Curvas P×R e IoU×limiar, com o limiar fixo e o ótimo."""
+    return comparative.render_threshold_figure(data.comparison)
 
 
 def render_patch_iou_distribution(data: MonographData, context: RenderContext) -> dict[str, bytes]:
@@ -2019,6 +2062,8 @@ FIGURE_RENDERERS: dict[str, Callable[[MonographData, RenderContext], dict[str, b
     "loss_terms": render_loss_terms,
     "qualitative_predictions": render_qualitative_predictions,
     "metrics_overview": render_metrics_overview,
+    "inference_levels": render_inference_levels,
+    "threshold_sensitivity": render_threshold_sensitivity,
     "patch_iou_distribution": render_patch_iou_distribution,
     "fold_consistency": render_fold_consistency,
     "area_hectares": render_area_hectares,

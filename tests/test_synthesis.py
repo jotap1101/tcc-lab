@@ -13,6 +13,7 @@ import pytest
 from src import comparative, evaluation, synthesis, trainer
 from src.data.patch_generation import manifest_path
 from src.metrics import f1_score, iou, precision, recall
+from src.thresholds import PROBABILITY_BINS
 from src.xai import attention_rollout, gradcam
 
 TEST_SOURCE = "emater"
@@ -72,7 +73,7 @@ def _summary(
         )
     values = {key: [item["metrics"][key] for item in per_fold] for key in evaluation.METRIC_KEYS}
     return {
-        "schema_version": 1,
+        "schema_version": evaluation.EVALUATION_SCHEMA_VERSION,
         "model": model_name,
         "source_name": source,
         "threshold": evaluation.DEFAULT_THRESHOLD,
@@ -166,6 +167,16 @@ def _write_environment(
                 patch_ids=np.asarray([patch_id], dtype=str),
                 predictions=np.stack([prediction.astype(np.uint8)]),
             )
+            positive = np.zeros((1, PROBABILITY_BINS), dtype=np.int64)
+            negative = np.zeros((1, PROBABILITY_BINS), dtype=np.int64)
+            positive[0, 200], positive[0, 50] = counts["tp"], counts["fn"]
+            negative[0, 200], negative[0, 10] = counts["fp"], PATCH_SIZE**2 - sum(counts.values())
+            np.savez_compressed(
+                evaluation.probabilities_path(paths, model_name, TEST_SOURCE, fold),
+                patch_ids=np.asarray([patch_id], dtype=str),
+                positive=positive,
+                negative=negative,
+            )
 
     manifest = pd.DataFrame(records)
     manifest_file = manifest_path(paths, TEST_SOURCE)
@@ -246,6 +257,7 @@ def _write_environment(
         summaries,
         TEST_SOURCE,
         comparative.comparison_fingerprint(summaries, TEST_SOURCE),
+        storage_paths=paths,
     )
     _write_json(comparative.comparison_path(paths, TEST_SOURCE), comparison)
 
@@ -335,11 +347,11 @@ def test_run_synthesis_persists_tables_and_figures(tmp_path, monkeypatch) -> Non
     result = synthesis.run_synthesis(paths, TEST_SOURCE)
 
     assert not result.skipped
-    assert set(result.tables) == set(synthesis.CORE_TABLES)
+    assert set(result.tables) == {*synthesis.CORE_TABLES, "threshold_sensitivity"}
     assert set(result.figures) == {"training_curves", "evaluation_overview"}
     for path in list(result.tables.values()) + list(result.figures.values()):
         assert path.is_file()
-    for name in synthesis.CORE_TABLES:
+    for name in (*synthesis.CORE_TABLES, "threshold_sensitivity"):
         assert synthesis.table_path(paths, TEST_SOURCE, name, "tex").is_file()
     assert result.figures["training_curves"].read_bytes().startswith(b"\x89PNG")
     assert result.tables_data["evaluation_aggregate"].shape[0] == 2
@@ -401,7 +413,8 @@ def test_render_xai_relevance_returns_png(tmp_path, monkeypatch) -> None:
 
     png = synthesis.render_xai_relevance(table)
 
-    assert png.startswith(b"\x89PNG")
+    assert png["png"].startswith(b"\x89PNG")
+    assert png["pdf"].startswith(b"%PDF")
 
 
 def test_validate_inputs_reports_fingerprint_divergence(tmp_path, monkeypatch) -> None:

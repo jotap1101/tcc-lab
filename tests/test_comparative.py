@@ -14,6 +14,7 @@ from src import comparative, evaluation
 from src.data.patch_generation import manifest_path, patch_fingerprint_hash
 from src.data.spatial_split import split_fingerprint_hash
 from src.metrics import f1_score, iou, precision, recall
+from src.thresholds import PROBABILITY_BINS
 from src.trainer import config_hash
 
 TEST_SOURCE = "alphaearth"
@@ -98,7 +99,7 @@ def _write_summary(
         )
     fold_values = {key: [item["metrics"][key] for item in per_fold] for key in _metrics(total)}
     payload = {
-        "schema_version": 1,
+        "schema_version": evaluation.EVALUATION_SCHEMA_VERSION,
         "model": model_name,
         "source_name": source,
         "threshold": THRESHOLD,
@@ -168,6 +169,8 @@ def _write_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
             rows = []
             fold_records = manifest[manifest["fold"] == fold]
             predictions = []
+            positive_histograms = []
+            negative_histograms = []
             for record in fold_records.itertuples():
                 truth = truths[str(record.patch_id)]
                 prediction = _predictions(
@@ -184,6 +187,12 @@ def _write_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
                 }
                 rows.append(row)
                 predictions.append(prediction)
+                positive = np.zeros(PROBABILITY_BINS, dtype=np.int64)
+                negative = np.zeros(PROBABILITY_BINS, dtype=np.int64)
+                positive[200], positive[50] = counts["tp"], counts["fn"]
+                negative[200], negative[10] = counts["fp"], PATCH_SIZE**2 - sum(counts.values())
+                positive_histograms.append(positive)
+                negative_histograms.append(negative)
             frame = pd.DataFrame(rows)
             frames[fold] = frame
             patch_file = evaluation.patch_metrics_path(paths, model_name, TEST_SOURCE, fold)
@@ -194,6 +203,12 @@ def _write_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
                 prediction_file,
                 patch_ids=np.asarray(fold_records["patch_id"].tolist(), dtype=str),
                 predictions=np.stack(predictions),
+            )
+            np.savez_compressed(
+                evaluation.probabilities_path(paths, model_name, TEST_SOURCE, fold),
+                patch_ids=np.asarray(fold_records["patch_id"].tolist(), dtype=str),
+                positive=np.stack(positive_histograms),
+                negative=np.stack(negative_histograms),
             )
         _write_summary(paths, model_name, TEST_SOURCE, frames, fingerprint)
     return paths, manifest, fingerprint
@@ -351,12 +366,14 @@ def test_render_and_save_error_maps(tmp_path, monkeypatch) -> None:
     selected = comparative.select_error_map_patches(aligned)
 
     samples = comparative.build_error_map_samples(paths, TEST_SOURCE, selected)
-    png = comparative.render_error_maps_figure(samples)
-    assert png.startswith(b"\x89PNG")
+    rendered = comparative.render_error_maps_figure(samples)
+    assert rendered["png"].startswith(b"\x89PNG")
+    assert rendered["pdf"].startswith(b"%PDF")
 
     figure = comparative.save_error_maps_figure(paths, TEST_SOURCE, selected)
     assert figure.is_file()
     assert figure.read_bytes().startswith(b"\x89PNG")
+    assert figure.with_suffix(".pdf").is_file()
 
 
 def test_save_comparison_figure(tmp_path, monkeypatch) -> None:
@@ -370,3 +387,48 @@ def test_save_comparison_figure(tmp_path, monkeypatch) -> None:
 
     assert figure.is_file()
     assert figure.read_bytes().startswith(b"\x89PNG")
+
+
+def test_comparison_reports_spatial_and_threshold_inference(tmp_path, monkeypatch) -> None:
+    """O payload deve trazer inferência por blocos/dobras e sensibilidade ao limiar."""
+    paths, _, _ = _write_environment(tmp_path, monkeypatch)
+    analysis = comparative.analyze_comparison(paths, TEST_SOURCE)
+    payload = analysis.payload
+
+    spatial = payload["spatial_inference"]
+    assert set(spatial["block_level"]) == set(comparative.METRIC_KEYS)
+    assert spatial["fold_level"]["iou"]["n_folds"] == FOLD_COUNT
+    assert spatial["block_level"]["iou"]["n_blocks"] >= 2
+
+    sensitivity = payload["threshold_sensitivity"]
+    assert sensitivity["bins"] == PROBABILITY_BINS
+    for model_name in MODEL_NAMES:
+        model = sensitivity["models"][model_name]
+        assert 0.0 <= model["average_precision"] <= 1.0
+        assert len(model["calibrated"]["per_fold"]) == FOLD_COUNT
+        # O histograma sintético separa as classes: o limiar calibrado não piora o fixo.
+        assert model["calibrated"]["aggregate"]["iou"] >= model["fixed"]["metrics"]["iou"] - 1e-9
+    assert "iou" in sensitivity["calibrated_delta"]
+
+
+def test_inference_and_threshold_figures(tmp_path, monkeypatch) -> None:
+    """As figuras de inferência e de limiar devem ser persistidas em PNG e PDF."""
+    paths, _, _ = _write_environment(tmp_path, monkeypatch)
+    analysis = comparative.analyze_comparison(paths, TEST_SOURCE)
+
+    inference = comparative.save_inference_figure(paths, TEST_SOURCE, analysis.payload)
+    threshold = comparative.save_threshold_figure(paths, TEST_SOURCE, analysis.payload)
+
+    for figure in (inference, threshold):
+        assert figure.read_bytes().startswith(b"\x89PNG")
+        assert figure.with_suffix(".pdf").read_bytes().startswith(b"%PDF")
+
+
+def test_summaries_are_current_requires_probabilities(tmp_path, monkeypatch) -> None:
+    """A ausência dos histogramas de probabilidade deve invalidar os resumos."""
+    paths, _, _ = _write_environment(tmp_path, monkeypatch)
+    summaries = comparative.load_evaluation_summaries(paths, TEST_SOURCE)
+
+    evaluation.probabilities_path(paths, "segformer", TEST_SOURCE, 1).unlink()
+
+    assert not comparative.summaries_are_current(paths, TEST_SOURCE, summaries)
