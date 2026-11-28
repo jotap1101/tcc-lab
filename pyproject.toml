@@ -1,7 +1,7 @@
 [project]
 name = "tcc"
 version = "0.1.0"
-description = "Segmentação semântica de lavouras cafeeiras: análise comparativa U-Net (CNN) vs SegFormer (ViT)"
+description = "Segmentação semântica de lavouras cafeeiras: análise comparativa entre Redes Neurais Convolucionais (U-Net) e Transformers (SegFormer)"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }

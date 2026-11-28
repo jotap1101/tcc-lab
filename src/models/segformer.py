@@ -1,4 +1,4 @@
-"""SegFormer (ViT) para segmentação binária de lavouras cafeeiras (estágio 10).
+"""SegFormer (Transformer) para segmentação binária de lavouras cafeeiras (estágio 10).
 
 Adapta o SegFormer do Hugging Face Transformers (`model.segformer_variant`,
 padrão `nvidia/mit-b1`) à entrada de quatro bandas do Sentinel-2 (B2/B3/B4/B8) e

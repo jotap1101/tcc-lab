@@ -3,7 +3,7 @@ import { Plugin } from "@opencode/plugin";
 // Contexto científico e metodológico que deve sobreviver à compactação de sessão.
 const TCC_CONTEXT = [
   "## Contexto do projeto (TCC)",
-  "- Pesquisa: segmentação semântica de cafezais (Região Geográfica Imediata de Guaxupé-MG) comparando U-Net (CNN) e SegFormer (ViT).",
+  "- Pesquisa: segmentação semântica de cafezais (Região Geográfica Imediata de Guaxupé-MG) comparando U-Net (CNN) e SegFormer (Transformer).",
   "- Fonte espectral: Sentinel-2 Level-2A, bandas B2/B3/B4/B8 a 10 m, patches 512x512.",
   "- Loss multivariada: Dice + Focal + Boundary. Validação: k-fold espacial (k=5).",
   "- Métricas pixel-level: IoU, F1-Score, Precision, Recall. XAI: Grad-CAM (U-Net) e Attention Rollout (SegFormer).",

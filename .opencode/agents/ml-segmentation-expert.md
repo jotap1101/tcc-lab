@@ -15,7 +15,7 @@ You are a deep learning / computer vision specialist focused on semantic segment
 ### Architectures
 
 - **U-Net (native CNN)**: encoder/decoder design, skip connections, depth vs. resolution trade-offs, number of channels per level, batch normalization, dropout, and memory footprint for 512x512 inputs.
-- **SegFormer (Vision Transformer)**: Mix Transformer (MiT) encoders, hierarchical feature maps, MLP decoder head, `SegformerForSemanticSegmentation` usage, and channel/stride configuration for the Sentinel-2 input (B2, B3, B4, B8 = 4 channels).
+- **SegFormer (Transformer)**: Mix Transformer (MiT) encoders, hierarchical feature maps, MLP decoder head, `SegformerForSemanticSegmentation` usage, and channel/stride configuration for the Sentinel-2 input (B2, B3, B4, B8 = 4 channels).
 - Comparative analysis methodology: fair comparison (same data, splits, and evaluation protocol) between the two families.
 
 ### Losses

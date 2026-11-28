@@ -1,1 +1,1 @@
-"""Modelos de segmentação semântica: U-Net (CNN) e SegFormer (ViT)."""
+"""Modelos de segmentação semântica: U-Net (CNN) e SegFormer (Transformer)."""

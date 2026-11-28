@@ -46,8 +46,8 @@ MODEL_BASE_RELATION = {"segformer": "finetune"}
 CITATION_KEY = "alves2026tcc"
 CITATION_AUTHOR = "João Pedro Alves"
 CITATION_TITLE = (
-    "Análise comparativa entre Redes Neurais Convolucionais (U-Net) e Vision "
-    "Transformers (SegFormer) na agricultura de precisão"
+    "Segmentação Semântica de Lavouras Cafeeiras: Análise Comparativa entre Redes "
+    "Neurais Convolucionais e Transformers na Agricultura de Precisão"
 )
 CITATION_SCHOOL = "IFSULDEMINAS — Bacharelado em Ciência da Computação"
 CITATION_YEAR = "2026"
